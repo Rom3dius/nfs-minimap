@@ -13,7 +13,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Setup Rust
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-ios
 
@@ -28,7 +28,7 @@ jobs:
 
       - name: Generate map tiles
         run: |
-          cargo run -p minimap-tiles --release --bin tile-processor -- \
+          cargo run -p minimap-tiles --release --features processor --bin tile-processor -- \
             switzerland.osm.pbf tiles/
 
       - name: Build iOS App

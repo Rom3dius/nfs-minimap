@@ -290,15 +290,5 @@ pub extern "C" fn minimap_set_status(text: *const std::ffi::c_char) {
     }
 }
 
-// ============================================================================
-// iOS App Entry Point
-// ============================================================================
-
-#[cfg(target_os = "ios")]
-#[no_mangle]
-pub extern "C" fn main() -> i32 {
-    // iOS entry point
-    // The actual app is initialized via UIApplicationMain in the Swift/ObjC layer
-    // which then calls minimap_init
-    0
-}
+// iOS entry point is handled by Swift's @main attribute
+// The Swift app calls minimap_init() to initialize the Rust library

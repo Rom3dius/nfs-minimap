@@ -35,6 +35,14 @@ echo "Found Rust library: $RUST_LIB"
 # Create build directories
 mkdir -p "$APP_DIR"
 
+# Find Skia libraries (built by cargo)
+SKIA_DIR=$(find "$PROJECT_ROOT/target/aarch64-apple-ios/release/build" -name "libskia.a" -exec dirname {} \; | head -1)
+if [ -z "$SKIA_DIR" ]; then
+    echo "Warning: Skia libraries not found, linking may fail"
+    SKIA_DIR="$PROJECT_ROOT/target/aarch64-apple-ios/release"
+fi
+echo "Skia libraries: $SKIA_DIR"
+
 # Compile Swift code
 echo ""
 echo "Compiling Swift..."
@@ -42,23 +50,34 @@ swiftc \
     -target arm64-apple-ios16.0 \
     -sdk "$IOS_SDK" \
     -O \
+    -parse-as-library \
     -emit-executable \
     -module-name Minimap \
     -import-objc-header "$SCRIPT_DIR/Minimap/Minimap-Bridging-Header.h" \
     "$SCRIPT_DIR/Minimap/MinimapApp.swift" \
     "$RUST_LIB" \
-    -L "$PROJECT_ROOT/target/aarch64-apple-ios/release" \
-    -lminimap_mobile \
+    -L "$SKIA_DIR" \
+    -lskia \
+    -lskia-bindings \
+    -lskparagraph \
+    -lskshaper \
+    -lskunicode_core \
+    -lskunicode_icu \
     -framework UIKit \
     -framework CoreLocation \
     -framework SwiftUI \
     -framework CoreFoundation \
     -framework CoreGraphics \
+    -framework CoreText \
     -framework QuartzCore \
     -framework Metal \
+    -framework MetalKit \
     -framework Security \
     -framework Foundation \
+    -framework ImageIO \
+    -framework MobileCoreServices \
     -lc++ \
+    -lz \
     -o "$APP_DIR/Minimap"
 
 echo "Compiled successfully!"
