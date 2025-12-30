@@ -1,0 +1,12 @@
+# iOS cross-compilation configuration
+
+[target.aarch64-apple-ios]
+# Use clang with iOS target for linking
+linker = "clang"
+rustflags = [
+    "-C", "link-arg=-target",
+    "-C", "link-arg=arm64-apple-ios16.0",
+]
+
+[env]
+IPHONEOS_DEPLOYMENT_TARGET = "16.0"

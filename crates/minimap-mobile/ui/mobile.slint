@@ -1,0 +1,85 @@
+// Mobile minimap UI - uses GPS for positioning
+
+import { MinimapView, RoadSegment, PlayerState, MinimapColors, Poi } from "../../../ui/minimap.slint";
+
+export { RoadSegment, PlayerState, Poi }
+
+export component MobileApp inherits Window {
+    title: "NFS Minimap";
+
+    // Properties bound from Rust
+    in property <[RoadSegment]> roads <=> map.roads;
+    in property <[Poi]> pois <=> map.pois;
+    in property <PlayerState> player <=> map.player;
+    in property <string> status-text: "Waiting for GPS...";
+    in property <bool> gps-active: false;
+
+    background: MinimapColors.bg;
+
+    VerticalLayout {
+        padding: 10px;
+        spacing: 10px;
+
+        // Status bar at top
+        Rectangle {
+            height: 40px;
+            background: #2a2a4e;
+            border-radius: 8px;
+
+            HorizontalLayout {
+                padding-left: 15px;
+                padding-right: 15px;
+                alignment: space-between;
+
+                // GPS indicator
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: center;
+
+                    Rectangle {
+                        width: 12px;
+                        height: 12px;
+                        border-radius: 6px;
+                        background: gps-active ? #2ecc71 : #e74c3c;
+                    }
+
+                    Text {
+                        text: gps-active ? "GPS Active" : "No GPS";
+                        color: MinimapColors.text-color;
+                        font-size: 14px;
+                        vertical-alignment: center;
+                    }
+                }
+
+                // Speed display
+                Text {
+                    text: "\{round(player.speed-kmh)} km/h";
+                    color: MinimapColors.text-color;
+                    font-size: 16px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        // Main map view (fills remaining space)
+        map := MinimapView {
+            // Takes up remaining vertical space
+        }
+
+        // Bottom info bar
+        Rectangle {
+            height: 30px;
+            background: #2a2a4e;
+            border-radius: 8px;
+
+            Text {
+                text: status-text;
+                color: #888;
+                font-size: 12px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+}

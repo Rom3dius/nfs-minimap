@@ -1,0 +1,22 @@
+[package]
+name = "minimap-simulator"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "simulator"
+path = "src/main.rs"
+
+[dependencies]
+minimap-core = { path = "../minimap-core" }
+minimap-tiles = { path = "../minimap-tiles", features = ["loader"] }
+slint = { workspace = true, features = ["backend-winit"] }
+log.workspace = true
+env_logger.workspace = true
+
+# For loading test data
+serde_json.workspace = true
+
+[build-dependencies]
+slint-build = "1.9"

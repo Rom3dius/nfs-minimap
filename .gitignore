@@ -1,0 +1,46 @@
+# Rust build artifacts
+/target/
+**/target/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ESP-IDF
+build/
+sdkconfig
+sdkconfig.old
+
+# Map data (large files)
+*.pbf
+*.osm
+*.mbtiles
+*.pmtiles
+tiles/
+
+# iOS build artifacts
+ios/build/
+*.ipa
+*.xcworkspace
+xcuserdata/
+*.xcuserstate
+DerivedData/
+
+# Android build artifacts
+*.apk
+*.aab
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local

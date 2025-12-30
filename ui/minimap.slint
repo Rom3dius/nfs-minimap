@@ -1,0 +1,196 @@
+// NFS2-style minimap UI
+// Simplified: roads + player marker + compass letters
+
+// A single road segment to be rendered
+export struct RoadSegment {
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+    road-type: int,  // 0 = primary, 1 = secondary, 2 = highlight
+}
+
+// A point of interest
+export struct Poi {
+    x: float,
+    y: float,
+    poi-type: int,  // 0 = gas station, 1 = parking, 2 = shopping mall, 3 = car wash
+}
+
+// Player position and heading
+export struct PlayerState {
+    heading: float,      // Degrees, 0 = North
+    speed-kmh: float,
+    latitude: float,
+    longitude: float,
+}
+
+// NFS2 color scheme
+export global MinimapColors {
+    out property <color> bg: #1a1a2e;
+    out property <color> road-primary: #4a90a4;
+    out property <color> road-secondary: #2d5a6b;
+    out property <color> road-highlight: #e94560;
+    out property <color> player-color: #f39c12;
+    out property <color> text-color: #eee;
+    out property <color> poi-gas: #e74c3c;      // Red for gas stations
+    out property <color> poi-parking: #3498db;  // Blue for parking
+    out property <color> poi-mall: #9b59b6;     // Purple for shopping malls
+    out property <color> poi-carwash: #1abc9c;  // Teal for car washes
+}
+
+// Reusable minimap view component (can be embedded in any container)
+export component MinimapView inherits Rectangle {
+    in property <[RoadSegment]> roads: [];
+    in property <[Poi]> pois: [];
+    in property <PlayerState> player: {
+        heading: 0,
+        speed-kmh: 0,
+        latitude: 0,
+        longitude: 0
+    };
+
+    background: MinimapColors.bg;
+
+    // The map canvas - centered square for perfect circle
+    Rectangle {
+        property <length> size: min(parent.width, parent.height);
+        width: size;
+        height: size;
+        x: (parent.width - size) / 2;
+        y: (parent.height - size) / 2;
+        background: MinimapColors.bg;
+
+        // Circular mask for round display
+        clip: true;
+        border-radius: size / 2;
+
+        // Road rendering layer - using viewbox to match screen coordinates
+        for segment in roads: Path {
+            width: 100%;
+            height: 100%;
+            viewbox-x: 0;
+            viewbox-y: 0;
+            viewbox-width: 800;
+            viewbox-height: 800;
+
+            stroke: segment.road-type == 0 ? MinimapColors.road-primary :
+                    segment.road-type == 1 ? MinimapColors.road-secondary :
+                    MinimapColors.road-highlight;
+            stroke-width: segment.road-type == 0 ? 4px :
+                         segment.road-type == 1 ? 2px : 6px;
+
+            MoveTo { x: segment.x1; y: segment.y1; }
+            LineTo { x: segment.x2; y: segment.y2; }
+        }
+
+        // POI markers (circles for all types)
+        // Scale factor to convert 800px coordinates to actual size
+        property <float> scale-factor: size / 800px;
+
+        for poi in pois: Rectangle {
+            property <length> poi-x: poi.x * 1px * scale-factor;
+            property <length> poi-y: poi.y * 1px * scale-factor;
+            width: 14px;
+            height: 14px;
+            x: poi-x - self.width / 2;
+            y: poi-y - self.height / 2;
+            border-radius: 7px;  // Circle
+            background: poi.poi-type == 0 ? MinimapColors.poi-gas :
+                        poi.poi-type == 1 ? MinimapColors.poi-parking :
+                        poi.poi-type == 2 ? MinimapColors.poi-mall :
+                        MinimapColors.poi-carwash;
+            border-width: 2px;
+            border-color: #fff;
+        }
+
+        // Player marker (small triangle at center, pointing up)
+        Rectangle {
+            width: 12px;
+            height: 12px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+
+            Path {
+                width: 100%;
+                height: 100%;
+                fill: MinimapColors.player-color;
+                stroke: #fff;
+                stroke-width: 1px;
+
+                MoveTo { x: 6; y: 0; }
+                LineTo { x: 0; y: 12; }
+                LineTo { x: 12; y: 12; }
+                Close {}
+            }
+        }
+
+        // Rotating compass - positions based on heading
+        // Radius from center for compass letters
+        property <length> compass-radius: size / 2 - 30px;
+        property <angle> heading-angle: -player.heading * 1deg;
+
+        // Compass: N
+        Text {
+            property <angle> angle: heading-angle;
+            x: parent.width / 2 - self.width / 2 + compass-radius * sin(angle);
+            y: parent.height / 2 - self.height / 2 - compass-radius * cos(angle);
+            text: "N";
+            font-size: 24px;
+            font-weight: 700;
+            color: MinimapColors.text-color;
+        }
+
+        // Compass: S
+        Text {
+            property <angle> angle: heading-angle + 180deg;
+            x: parent.width / 2 - self.width / 2 + compass-radius * sin(angle);
+            y: parent.height / 2 - self.height / 2 - compass-radius * cos(angle);
+            text: "S";
+            font-size: 24px;
+            font-weight: 700;
+            color: MinimapColors.text-color;
+        }
+
+        // Compass: E
+        Text {
+            property <angle> angle: heading-angle + 90deg;
+            x: parent.width / 2 - self.width / 2 + compass-radius * sin(angle);
+            y: parent.height / 2 - self.height / 2 - compass-radius * cos(angle);
+            text: "E";
+            font-size: 24px;
+            font-weight: 700;
+            color: MinimapColors.text-color;
+        }
+
+        // Compass: W
+        Text {
+            property <angle> angle: heading-angle - 90deg;
+            x: parent.width / 2 - self.width / 2 + compass-radius * sin(angle);
+            y: parent.height / 2 - self.height / 2 - compass-radius * cos(angle);
+            text: "W";
+            font-size: 24px;
+            font-weight: 700;
+            color: MinimapColors.text-color;
+        }
+    }
+}
+
+// Window wrapper for standalone use (ESP32)
+export component Minimap inherits Window {
+    in property <[RoadSegment]> roads <=> view.roads;
+    in property <[Poi]> pois <=> view.pois;
+    in property <PlayerState> player <=> view.player;
+
+    title: "NFS2 Minimap";
+    background: MinimapColors.bg;
+    preferred-width: 800px;
+    preferred-height: 800px;
+    min-width: 400px;
+    min-height: 400px;
+
+    view := MinimapView {
+        width: 100%;
+        height: 100%;
+    }
+}

@@ -1,0 +1,28 @@
+[app]
+name = "NFS Minimap"
+stylized-name = "NFS Minimap"
+identifier = "com.nfs.minimap"
+asset-dir = "assets"
+template-pack = "slint"
+
+[app.metadata]
+supported = ["Apple", "Android"]
+
+[apple]
+development-team = "YOUR_TEAM_ID"  # Replace with your Apple Developer Team ID
+bundle-version = "1"
+bundle-version-short = "0.1.0"
+
+[apple.ios]
+frameworks = ["CoreLocation"]
+device-family = ["iPhone", "iPad"]
+deployment-target = "15.0"
+
+# Privacy descriptions for iOS
+[apple.plist]
+NSLocationWhenInUseUsageDescription = "NFS Minimap needs your location to show your position on the map"
+NSLocationAlwaysAndWhenInUseUsageDescription = "NFS Minimap needs your location to show your position on the map while driving"
+
+[android]
+min-sdk-version = 24
+target-sdk-version = 34

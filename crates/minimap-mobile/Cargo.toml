@@ -1,0 +1,30 @@
+[package]
+name = "minimap-mobile"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+# For iOS: only staticlib (linked by Xcode/native toolchain)
+# For desktop: lib is enough for testing
+crate-type = ["lib", "staticlib"]
+name = "minimap_mobile"
+
+[dependencies]
+minimap-core = { path = "../minimap-core" }
+minimap-tiles = { path = "../minimap-tiles", features = ["loader"] }
+slint = { workspace = true }
+log.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+android-activity = { version = "0.6", features = ["native-activity"] }
+android_logger = "0.14"
+
+# iOS GPS is handled via FFI - native Swift/ObjC code calls minimap_update_gps()
+# [target.'cfg(target_os = "ios")'.dependencies]
+
+[features]
+default = []
+
+[build-dependencies]
+slint-build = "1.9"

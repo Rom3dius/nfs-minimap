@@ -1,0 +1,51 @@
+name: Build iOS App
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "ios-*"
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-action@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - name: Build Rust library
+        run: |
+          cargo build -p minimap-mobile --target aarch64-apple-ios --release
+
+      - name: Download Switzerland OSM data
+        run: |
+          curl -L -o switzerland.osm.pbf \
+            https://download.geofabrik.de/europe/switzerland-latest.osm.pbf
+
+      - name: Generate map tiles
+        run: |
+          cargo run -p minimap-tiles --release --bin tile-processor -- \
+            switzerland.osm.pbf tiles/
+
+      - name: Build iOS App
+        run: |
+          cd ios
+          ./build.sh
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Minimap-unsigned.ipa
+          path: ios/build/Minimap-unsigned.ipa
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ios/build/Minimap-unsigned.ipa
+          draft: false
+          prerelease: true
