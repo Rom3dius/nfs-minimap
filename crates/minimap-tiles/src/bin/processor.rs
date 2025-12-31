@@ -5,12 +5,12 @@
 //! Downloads Switzerland PBF from:
 //! https://download.geofabrik.de/europe/switzerland-latest.osm.pbf
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
 use minimap_tiles::*;
-use osmpbf::{Element, ElementReader};
+use osmpbf::{Element, ElementReader, RelMemberType};
 
 fn main() {
     env_logger::init();
@@ -32,29 +32,43 @@ fn main() {
 
     log::info!("Processing {} -> {}", input_path, output_dir);
 
-    // First pass: collect all nodes we need (for ways)
-    log::info!("Pass 1: Collecting node IDs from ways...");
-    let needed_nodes = collect_needed_nodes(input_path);
+    // Pass 1: Collect way IDs from water relations
+    log::info!("Pass 1: Collecting way IDs from water relations...");
+    let (relation_ways, water_relations) = collect_water_relation_ways(input_path);
+    log::info!("Found {} water relations with {} member ways", water_relations.len(), relation_ways.len());
+
+    // Pass 2: collect all nodes we need (for ways + relation member ways)
+    log::info!("Pass 2: Collecting node IDs from ways...");
+    let needed_nodes = collect_needed_nodes(input_path, &relation_ways);
     log::info!("Found {} needed nodes", needed_nodes.len());
 
-    // Second pass: collect node coordinates
-    log::info!("Pass 2: Reading node coordinates...");
+    // Pass 3: collect node coordinates
+    log::info!("Pass 3: Reading node coordinates...");
     let node_coords = collect_node_coords(input_path, &needed_nodes);
     log::info!("Collected {} node coordinates", node_coords.len());
 
-    // Third pass: process ways and build tiles
-    log::info!("Pass 3: Processing ways and building tiles...");
-    let tiles = process_ways(input_path, &node_coords);
+    // Pass 4: collect way geometries for relation members
+    log::info!("Pass 4: Collecting way geometries for relations...");
+    let way_geometries = collect_way_geometries(input_path, &relation_ways, &node_coords);
+    log::info!("Collected {} way geometries", way_geometries.len());
+
+    // Pass 5: process ways and relations, build tiles
+    log::info!("Pass 5: Processing ways/relations and building tiles...");
+    let tiles = process_ways_and_relations(input_path, &node_coords, &water_relations, &way_geometries);
     log::info!("Created {} tiles", tiles.len());
 
     // Write tiles to disk
     log::info!("Writing tiles to disk...");
     let mut total_roads = 0;
     let mut total_pois = 0;
+    let mut total_areas = 0;
+    let mut total_waterways = 0;
 
     for ((tx, ty), tile) in &tiles {
         total_roads += tile.roads.len();
         total_pois += tile.pois.len();
+        total_areas += tile.areas.len();
+        total_waterways += tile.waterways.len();
 
         let filename = tile_filename(*tx, *ty);
         let path = Path::new(output_dir).join(&filename);
@@ -64,10 +78,12 @@ fn main() {
     }
 
     log::info!(
-        "Done! Wrote {} tiles with {} roads and {} POIs",
+        "Done! Wrote {} tiles with {} roads, {} POIs, {} areas, and {} waterways",
         tiles.len(),
         total_roads,
-        total_pois
+        total_pois,
+        total_areas,
+        total_waterways
     );
 
     // Write index file
@@ -80,18 +96,68 @@ fn main() {
     log::info!("Wrote tile index to {}", index_path.display());
 }
 
-/// Collect node IDs that are referenced by ways we care about
-fn collect_needed_nodes(path: &str) -> std::collections::HashSet<i64> {
+/// Water relation info
+struct WaterRelation {
+    outer_ways: Vec<i64>,
+}
+
+/// Collect way IDs from water relations (lakes, rivers as multipolygons)
+fn collect_water_relation_ways(path: &str) -> (HashSet<i64>, HashMap<i64, WaterRelation>) {
     let reader = ElementReader::from_path(path).expect("Failed to open PBF");
-    let mut needed = std::collections::HashSet::new();
+    let mut way_ids = HashSet::new();
+    let mut relations = HashMap::new();
+
+    reader
+        .for_each(|element| {
+            if let Element::Relation(rel) = element {
+                let tags: Vec<(&str, &str)> = rel.tags().collect();
+
+                // Check if it's a water multipolygon
+                let is_multipolygon = tags.iter().any(|(k, v)| *k == "type" && *v == "multipolygon");
+                let is_water = tags.iter().any(|(k, v)| {
+                    (*k == "natural" && *v == "water")
+                        || (*k == "waterway" && *v == "riverbank")
+                        || (*k == "landuse" && *v == "reservoir")
+                        || *k == "water"
+                });
+
+                if is_multipolygon && is_water {
+                    let mut outer_ways = Vec::new();
+
+                    for member in rel.members() {
+                        if member.member_type == RelMemberType::Way {
+                            // Include outer and unlabeled (default outer) roles
+                            let role = member.role().unwrap_or("");
+                            if role == "outer" || role.is_empty() {
+                                way_ids.insert(member.member_id);
+                                outer_ways.push(member.member_id);
+                            }
+                        }
+                    }
+
+                    if !outer_ways.is_empty() {
+                        relations.insert(rel.id(), WaterRelation { outer_ways });
+                    }
+                }
+            }
+        })
+        .expect("Failed to read PBF");
+
+    (way_ids, relations)
+}
+
+/// Collect node IDs that are referenced by ways we care about
+fn collect_needed_nodes(path: &str, relation_ways: &HashSet<i64>) -> HashSet<i64> {
+    let reader = ElementReader::from_path(path).expect("Failed to open PBF");
+    let mut needed = HashSet::new();
 
     reader
         .for_each(|element| {
             if let Element::Way(way) = element {
-                let dominated_tags: Vec<(&str, &str)> = way.tags().collect();
+                let tags: Vec<(&str, &str)> = way.tags().collect();
 
                 // Check if it's a road we want
-                let dominated_is_road = dominated_tags.iter().any(|(k, v)| {
+                let is_road = tags.iter().any(|(k, v)| {
                     *k == "highway"
                         && matches!(
                             *v,
@@ -113,15 +179,41 @@ fn collect_needed_nodes(path: &str) -> std::collections::HashSet<i64> {
                 });
 
                 // Check if it's a POI we want
-                let is_fuel = dominated_tags.iter().any(|(k, v)| *k == "amenity" && *v == "fuel");
-                let is_parking = dominated_tags.iter().any(|(k, v)| *k == "amenity" && *v == "parking")
-                    && dominated_tags
+                let is_fuel = tags.iter().any(|(k, v)| *k == "amenity" && *v == "fuel");
+                let is_parking = tags.iter().any(|(k, v)| *k == "amenity" && *v == "parking")
+                    && tags
                         .iter()
                         .any(|(k, v)| *k == "parking" && (*v == "multi-storey" || *v == "underground"));
-                let is_mall = dominated_tags.iter().any(|(k, v)| *k == "shop" && *v == "mall");
-                let is_car_wash = dominated_tags.iter().any(|(k, v)| *k == "amenity" && *v == "car_wash");
+                let is_mall = tags.iter().any(|(k, v)| *k == "shop" && *v == "mall");
+                let is_car_wash = tags.iter().any(|(k, v)| *k == "amenity" && *v == "car_wash");
 
-                if dominated_is_road || is_fuel || is_parking || is_mall || is_car_wash {
+                // Check if it's an area we want (water, forest, park)
+                let is_water = tags.iter().any(|(k, v)| {
+                    (*k == "natural" && *v == "water")
+                        || (*k == "waterway" && *v == "riverbank")
+                        || (*k == "landuse" && *v == "reservoir")
+                        || *k == "water"
+                });
+                let is_forest = tags.iter().any(|(k, v)| {
+                    (*k == "natural" && *v == "wood") || (*k == "landuse" && *v == "forest")
+                });
+                let is_park = tags.iter().any(|(k, v)| *k == "leisure" && *v == "park");
+                let is_grass = tags.iter().any(|(k, v)| {
+                    (*k == "landuse" && (*v == "grass" || *v == "meadow"))
+                        || (*k == "natural" && *v == "grassland")
+                });
+
+                // Check if it's a linear waterway (river, stream, canal)
+                let is_waterway = tags.iter().any(|(k, v)| {
+                    *k == "waterway" && matches!(*v, "river" | "stream" | "canal")
+                });
+
+                // Also check if this way is part of a water relation
+                let is_relation_member = relation_ways.contains(&way.id());
+
+                if is_road || is_fuel || is_parking || is_mall || is_car_wash
+                    || is_water || is_forest || is_park || is_grass || is_waterway || is_relation_member
+                {
                     for node_id in way.refs() {
                         needed.insert(node_id);
                     }
@@ -158,8 +250,42 @@ fn collect_node_coords(
     coords
 }
 
-/// Process ways and build tiles
-fn process_ways(path: &str, node_coords: &HashMap<i64, (f64, f64)>) -> HashMap<(i32, i32), Tile> {
+/// Collect way geometries for relation member ways
+fn collect_way_geometries(
+    path: &str,
+    relation_ways: &HashSet<i64>,
+    node_coords: &HashMap<i64, (f64, f64)>,
+) -> HashMap<i64, Vec<(f64, f64)>> {
+    let reader = ElementReader::from_path(path).expect("Failed to open PBF");
+    let mut geometries = HashMap::new();
+
+    reader
+        .for_each(|element| {
+            if let Element::Way(way) = element {
+                if relation_ways.contains(&way.id()) {
+                    let points: Vec<(f64, f64)> = way
+                        .refs()
+                        .filter_map(|id| node_coords.get(&id).copied())
+                        .collect();
+
+                    if !points.is_empty() {
+                        geometries.insert(way.id(), points);
+                    }
+                }
+            }
+        })
+        .expect("Failed to read PBF");
+
+    geometries
+}
+
+/// Process ways and relations, build tiles
+fn process_ways_and_relations(
+    path: &str,
+    node_coords: &HashMap<i64, (f64, f64)>,
+    water_relations: &HashMap<i64, WaterRelation>,
+    way_geometries: &HashMap<i64, Vec<(f64, f64)>>,
+) -> HashMap<(i32, i32), Tile> {
     let reader = ElementReader::from_path(path).expect("Failed to open PBF");
     let mut tiles: HashMap<(i32, i32), Tile> = HashMap::new();
 
@@ -194,6 +320,60 @@ fn process_ways(path: &str, node_coords: &HashMap<i64, (f64, f64)>) -> HashMap<(
                     // Add road to all tiles it passes through
                     add_road_to_tiles(&mut tiles, &points, road_type);
                     return;
+                }
+
+                // Check if it's a linear waterway (river, stream, canal)
+                let waterway = tags.iter().find(|(k, _)| *k == "waterway").map(|(_, v)| *v);
+                if let Some(ww) = waterway {
+                    let waterway_type = match ww {
+                        "river" => Some(WaterwayType::River),
+                        "stream" => Some(WaterwayType::Stream),
+                        "canal" => Some(WaterwayType::Canal),
+                        _ => None,
+                    };
+
+                    if let Some(wt) = waterway_type {
+                        add_waterway_to_tiles(&mut tiles, &points, wt);
+                        return;
+                    }
+                }
+
+                // Check if it's an area (water, forest, park, grass)
+                // Only treat as area if the way is closed (first point ≈ last point)
+                let is_closed = if points.len() >= 3 {
+                    let first = points.first().unwrap();
+                    let last = points.last().unwrap();
+                    (first.0 - last.0).abs() < 0.0001 && (first.1 - last.1).abs() < 0.0001
+                } else {
+                    false
+                };
+
+                if is_closed {
+                    let natural = tags.iter().find(|(k, _)| *k == "natural").map(|(_, v)| *v);
+                    let landuse = tags.iter().find(|(k, _)| *k == "landuse").map(|(_, v)| *v);
+                    let leisure = tags.iter().find(|(k, _)| *k == "leisure").map(|(_, v)| *v);
+                    let has_water_tag = tags.iter().any(|(k, _)| *k == "water");
+
+                    let area_type = if natural == Some("water") || waterway == Some("riverbank")
+                        || landuse == Some("reservoir") || has_water_tag
+                    {
+                        Some(AreaType::Water)
+                    } else if natural == Some("wood") || landuse == Some("forest") {
+                        Some(AreaType::Forest)
+                    } else if leisure == Some("park") {
+                        Some(AreaType::Park)
+                    } else if landuse == Some("grass") || landuse == Some("meadow")
+                        || natural == Some("grassland")
+                    {
+                        Some(AreaType::Grass)
+                    } else {
+                        None
+                    };
+
+                    if let Some(at) = area_type {
+                        add_area_to_tiles(&mut tiles, &points, at);
+                        return;
+                    }
                 }
 
                 // Check if it's a POI
@@ -265,6 +445,76 @@ fn process_ways(path: &str, node_coords: &HashMap<i64, (f64, f64)>) -> HashMap<(
         })
         .expect("Failed to read PBF");
 
+    // Process water relations (lakes, etc.)
+    for (_rel_id, relation) in water_relations {
+        // Try to join ways into closed polygons
+        let mut remaining_ways: Vec<Vec<(f64, f64)>> = relation
+            .outer_ways
+            .iter()
+            .filter_map(|way_id| way_geometries.get(way_id).cloned())
+            .filter(|points| points.len() >= 2)
+            .collect();
+
+        while !remaining_ways.is_empty() {
+            // Start a new polygon with the first remaining way
+            let mut polygon = remaining_ways.remove(0);
+
+            // Try to extend the polygon by finding connecting ways
+            let mut made_progress = true;
+            while made_progress {
+                made_progress = false;
+
+                let first = polygon.first().unwrap();
+                let last = polygon.last().unwrap();
+
+                // Check if polygon is already closed
+                if polygon.len() >= 3
+                    && (first.0 - last.0).abs() < 0.0001
+                    && (first.1 - last.1).abs() < 0.0001
+                {
+                    break;
+                }
+
+                // Find a way that connects to the end of our polygon
+                for i in 0..remaining_ways.len() {
+                    let way = &remaining_ways[i];
+                    let way_first = way.first().unwrap();
+                    let way_last = way.last().unwrap();
+
+                    // Check if way connects to end of polygon
+                    if (last.0 - way_first.0).abs() < 0.0001 && (last.1 - way_first.1).abs() < 0.0001
+                    {
+                        // Append way (skip first point as it's the same as polygon's last)
+                        let mut way = remaining_ways.remove(i);
+                        polygon.extend(way.drain(1..));
+                        made_progress = true;
+                        break;
+                    } else if (last.0 - way_last.0).abs() < 0.0001
+                        && (last.1 - way_last.1).abs() < 0.0001
+                    {
+                        // Append reversed way
+                        let mut way = remaining_ways.remove(i);
+                        way.reverse();
+                        polygon.extend(way.drain(1..));
+                        made_progress = true;
+                        break;
+                    }
+                }
+            }
+
+            // Only add if the polygon is closed
+            if polygon.len() >= 3 {
+                let first = polygon.first().unwrap();
+                let last = polygon.last().unwrap();
+                if (first.0 - last.0).abs() < 0.0001 && (first.1 - last.1).abs() < 0.0001 {
+                    add_area_to_tiles(&mut tiles, &polygon, AreaType::Water);
+                }
+            }
+        }
+    }
+
+    log::info!("Processed {} water relations", water_relations.len());
+
     tiles
 }
 
@@ -294,6 +544,39 @@ fn add_road_to_tiles(tiles: &mut HashMap<(i32, i32), Tile>, points: &[(f64, f64)
                 let tile = tiles.entry((tx, ty)).or_insert_with(|| Tile::new(tx, ty));
                 tile.roads.push(TileRoad {
                     road_type,
+                    points: vec![(ox1, oy1), (ox2, oy2)],
+                });
+            }
+        }
+    }
+}
+
+fn add_waterway_to_tiles(tiles: &mut HashMap<(i32, i32), Tile>, points: &[(f64, f64)], waterway_type: WaterwayType) {
+    // Process each segment (pair of consecutive points)
+    for window in points.windows(2) {
+        let (lat1, lon1) = window[0];
+        let (lat2, lon2) = window[1];
+
+        // Find all tiles this segment passes through
+        let tiles_touched = get_tiles_for_segment(lat1, lon1, lat2, lon2);
+
+        for (tx, ty) in tiles_touched {
+            // Clip segment to tile bounds and convert to tile coordinates
+            let tile_min_lat = ty as f64 * TILE_SIZE_DEG;
+            let tile_max_lat = tile_min_lat + TILE_SIZE_DEG;
+            let tile_min_lon = tx as f64 * TILE_SIZE_DEG;
+            let tile_max_lon = tile_min_lon + TILE_SIZE_DEG;
+
+            // Clip the segment to tile bounds
+            if let Some((clipped_lat1, clipped_lon1, clipped_lat2, clipped_lon2)) =
+                clip_segment_to_tile(lat1, lon1, lat2, lon2, tile_min_lat, tile_max_lat, tile_min_lon, tile_max_lon)
+            {
+                let (ox1, oy1) = lat_lon_to_tile_offset(clipped_lat1, clipped_lon1, tx, ty);
+                let (ox2, oy2) = lat_lon_to_tile_offset(clipped_lat2, clipped_lon2, tx, ty);
+
+                let tile = tiles.entry((tx, ty)).or_insert_with(|| Tile::new(tx, ty));
+                tile.waterways.push(TileWaterway {
+                    waterway_type,
                     points: vec![(ox1, oy1), (ox2, oy2)],
                 });
             }
@@ -396,4 +679,132 @@ fn add_poi_to_tiles(tiles: &mut HashMap<(i32, i32), Tile>, lat: f64, lon: f64, p
         x: ox,
         y: oy,
     });
+}
+
+fn add_area_to_tiles(tiles: &mut HashMap<(i32, i32), Tile>, points: &[(f64, f64)], area_type: AreaType) {
+    if points.len() < 3 {
+        return; // Need at least 3 points for a polygon
+    }
+
+    // Find the bounding box of the polygon
+    let min_lat = points.iter().map(|(lat, _)| *lat).fold(f64::INFINITY, f64::min);
+    let max_lat = points.iter().map(|(lat, _)| *lat).fold(f64::NEG_INFINITY, f64::max);
+    let min_lon = points.iter().map(|(_, lon)| *lon).fold(f64::INFINITY, f64::min);
+    let max_lon = points.iter().map(|(_, lon)| *lon).fold(f64::NEG_INFINITY, f64::max);
+
+    let (min_tx, min_ty) = lat_lon_to_tile(min_lat, min_lon);
+    let (max_tx, max_ty) = lat_lon_to_tile(max_lat, max_lon);
+
+    // Add the polygon to each tile it touches, CLIPPED to tile bounds
+    for tx in min_tx..=max_tx {
+        for ty in min_ty..=max_ty {
+            // Tile bounds in lat/lon
+            let tile_min_lat = ty as f64 * TILE_SIZE_DEG;
+            let tile_max_lat = tile_min_lat + TILE_SIZE_DEG;
+            let tile_min_lon = tx as f64 * TILE_SIZE_DEG;
+            let tile_max_lon = tile_min_lon + TILE_SIZE_DEG;
+
+            // Clip polygon to tile bounds using Sutherland-Hodgman algorithm
+            let clipped = clip_polygon_to_rect(
+                points,
+                tile_min_lat, tile_max_lat,
+                tile_min_lon, tile_max_lon,
+            );
+
+            if clipped.len() < 3 {
+                continue; // Clipped polygon is degenerate
+            }
+
+            // Convert clipped points to tile-local coordinates
+            let tile_points: Vec<(i16, i16)> = clipped
+                .iter()
+                .map(|(lat, lon)| lat_lon_to_tile_offset(*lat, *lon, tx, ty))
+                .collect();
+
+            let tile = tiles.entry((tx, ty)).or_insert_with(|| Tile::new(tx, ty));
+            tile.areas.push(TileArea {
+                area_type,
+                points: tile_points,
+            });
+        }
+    }
+}
+
+/// Sutherland-Hodgman polygon clipping algorithm
+/// Clips a polygon to a rectangular boundary
+fn clip_polygon_to_rect(
+    points: &[(f64, f64)],
+    min_lat: f64, max_lat: f64,
+    min_lon: f64, max_lon: f64,
+) -> Vec<(f64, f64)> {
+    // Clip against each edge in turn: bottom, top, left, right
+    let mut output = points.to_vec();
+
+    // Clip against bottom edge (min_lat)
+    output = clip_polygon_edge(&output, |p| p.0 >= min_lat, |p1, p2| {
+        let t = (min_lat - p1.0) / (p2.0 - p1.0);
+        (min_lat, p1.1 + t * (p2.1 - p1.1))
+    });
+
+    // Clip against top edge (max_lat)
+    output = clip_polygon_edge(&output, |p| p.0 <= max_lat, |p1, p2| {
+        let t = (max_lat - p1.0) / (p2.0 - p1.0);
+        (max_lat, p1.1 + t * (p2.1 - p1.1))
+    });
+
+    // Clip against left edge (min_lon)
+    output = clip_polygon_edge(&output, |p| p.1 >= min_lon, |p1, p2| {
+        let t = (min_lon - p1.1) / (p2.1 - p1.1);
+        (p1.0 + t * (p2.0 - p1.0), min_lon)
+    });
+
+    // Clip against right edge (max_lon)
+    output = clip_polygon_edge(&output, |p| p.1 <= max_lon, |p1, p2| {
+        let t = (max_lon - p1.1) / (p2.1 - p1.1);
+        (p1.0 + t * (p2.0 - p1.0), max_lon)
+    });
+
+    output
+}
+
+/// Clip polygon against a single edge
+fn clip_polygon_edge<F, I>(
+    points: &[(f64, f64)],
+    inside: F,
+    intersect: I,
+) -> Vec<(f64, f64)>
+where
+    F: Fn(&(f64, f64)) -> bool,
+    I: Fn(&(f64, f64), &(f64, f64)) -> (f64, f64),
+{
+    if points.is_empty() {
+        return Vec::new();
+    }
+
+    let mut output = Vec::new();
+
+    for i in 0..points.len() {
+        let current = &points[i];
+        let next = &points[(i + 1) % points.len()];
+
+        let current_inside = inside(current);
+        let next_inside = inside(next);
+
+        if current_inside {
+            if next_inside {
+                // Both inside: add next
+                output.push(*next);
+            } else {
+                // Current inside, next outside: add intersection
+                output.push(intersect(current, next));
+            }
+        } else if next_inside {
+            // Current outside, next inside: add intersection and next
+            output.push(intersect(current, next));
+            output.push(*next);
+        }
+        // Both outside: add nothing
+    }
+
+    output
 }

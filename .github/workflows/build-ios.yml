@@ -6,6 +6,9 @@ on:
     tags:
       - "ios-*"
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: macos-14

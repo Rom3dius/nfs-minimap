@@ -22,7 +22,7 @@ pub const COORD_SCALE: f64 = 3000.0;
 pub const TILE_MAGIC: [u8; 4] = *b"MMAP";
 
 /// Current tile format version
-pub const TILE_VERSION: u8 = 1;
+pub const TILE_VERSION: u8 = 3;
 
 /// Road types (matches minimap-core)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,6 +42,25 @@ pub enum PoiType {
     CarWash = 3,
 }
 
+/// Area types for natural features
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum AreaType {
+    Water = 0,      // Lakes, rivers, ponds
+    Forest = 1,     // Forests, woods
+    Park = 2,       // Parks, gardens
+    Grass = 3,      // Meadows, grassland
+}
+
+/// Waterway types for linear water features
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum WaterwayType {
+    River = 0,      // Major rivers
+    Stream = 1,     // Streams, creeks
+    Canal = 2,      // Canals
+}
+
 /// A road stored in a tile (coordinates relative to tile origin)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TileRoad {
@@ -59,7 +78,24 @@ pub struct TilePoi {
     pub y: i16,
 }
 
-/// A complete tile with roads and POIs
+/// An area (polygon) stored in a tile
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TileArea {
+    pub area_type: AreaType,
+    /// Polygon points as (x, y) offsets from tile origin, scaled by COORD_SCALE
+    /// The polygon is implicitly closed (first point connects to last)
+    pub points: Vec<(i16, i16)>,
+}
+
+/// A waterway (linear water feature) stored in a tile
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TileWaterway {
+    pub waterway_type: WaterwayType,
+    /// Points as (x, y) offsets from tile origin, scaled by COORD_SCALE
+    pub points: Vec<(i16, i16)>,
+}
+
+/// A complete tile with roads, POIs, areas, and waterways
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tile {
     /// Tile X coordinate (longitude / TILE_SIZE_DEG, floored)
@@ -70,6 +106,11 @@ pub struct Tile {
     pub roads: Vec<TileRoad>,
     /// POIs in this tile
     pub pois: Vec<TilePoi>,
+    /// Areas (polygons) in this tile
+    pub areas: Vec<TileArea>,
+    /// Waterways (linear water features) in this tile
+    #[serde(default)]
+    pub waterways: Vec<TileWaterway>,
 }
 
 impl Tile {
@@ -80,6 +121,8 @@ impl Tile {
             tile_y,
             roads: Vec::new(),
             pois: Vec::new(),
+            areas: Vec::new(),
+            waterways: Vec::new(),
         }
     }
 
@@ -276,6 +319,44 @@ pub mod loader {
             }
 
             pois
+        }
+
+        /// Get all areas from loaded tiles, converted to world coordinates
+        pub fn get_areas(&self) -> Vec<(AreaType, Vec<(f64, f64)>)> {
+            let mut areas = Vec::new();
+
+            for tile in self.loaded_tiles.values() {
+                for area in &tile.areas {
+                    let points: Vec<(f64, f64)> = area
+                        .points
+                        .iter()
+                        .map(|(ox, oy)| tile_offset_to_lat_lon(*ox, *oy, tile.tile_x, tile.tile_y))
+                        .collect();
+
+                    areas.push((area.area_type, points));
+                }
+            }
+
+            areas
+        }
+
+        /// Get all waterways from loaded tiles, converted to world coordinates
+        pub fn get_waterways(&self) -> Vec<(WaterwayType, Vec<(f64, f64)>)> {
+            let mut waterways = Vec::new();
+
+            for tile in self.loaded_tiles.values() {
+                for waterway in &tile.waterways {
+                    let points: Vec<(f64, f64)> = waterway
+                        .points
+                        .iter()
+                        .map(|(ox, oy)| tile_offset_to_lat_lon(*ox, *oy, tile.tile_x, tile.tile_y))
+                        .collect();
+
+                    waterways.push((waterway.waterway_type, points));
+                }
+            }
+
+            waterways
         }
 
         /// Number of loaded tiles

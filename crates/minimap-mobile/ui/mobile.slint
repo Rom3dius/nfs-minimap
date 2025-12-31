@@ -1,8 +1,8 @@
 // Mobile minimap UI - uses GPS for positioning
 
-import { MinimapView, RoadSegment, PlayerState, MinimapColors, Poi } from "../../../ui/minimap.slint";
+import { MinimapView, RoadSegment, PlayerState, MinimapColors, Poi, AreaTriangle, WaterwaySegment } from "../../../ui/minimap.slint";
 
-export { RoadSegment, PlayerState, Poi }
+export { RoadSegment, PlayerState, Poi, AreaTriangle, WaterwaySegment }
 
 export component MobileApp inherits Window {
     title: "NFS Minimap";
@@ -10,6 +10,8 @@ export component MobileApp inherits Window {
     // Properties bound from Rust
     in property <[RoadSegment]> roads <=> map.roads;
     in property <[Poi]> pois <=> map.pois;
+    in property <[AreaTriangle]> areas <=> map.areas;
+    in property <[WaterwaySegment]> waterways <=> map.waterways;
     in property <PlayerState> player <=> map.player;
     in property <string> status-text: "Waiting for GPS...";
     in property <bool> gps-active: false;

@@ -17,7 +17,8 @@
 
 use minimap_core::{
     map_data::{self, BoundingBox},
-    MapRenderer, MinimapConfig, PoiType, RoadType, VehicleState, WorldPoi, WorldRoad,
+    AreaType, MapRenderer, MinimapConfig, PoiType, RoadType, VehicleState, WaterwayType,
+    WorldArea, WorldPoi, WorldRoad, WorldWaterway,
 };
 use minimap_tiles::loader::TileLoader;
 
@@ -246,21 +247,54 @@ fn update_map_from_source(source: &mut MapSource, renderer: &mut MapRenderer, la
             })
             .collect();
 
+        let areas: Vec<WorldArea> = loader
+            .get_areas()
+            .into_iter()
+            .map(|(area_type, points)| WorldArea {
+                points,
+                area_type: match area_type {
+                    minimap_tiles::AreaType::Water => AreaType::Water,
+                    minimap_tiles::AreaType::Forest => AreaType::Forest,
+                    minimap_tiles::AreaType::Park => AreaType::Park,
+                    minimap_tiles::AreaType::Grass => AreaType::Grass,
+                },
+            })
+            .collect();
+
+        let waterways: Vec<WorldWaterway> = loader
+            .get_waterways()
+            .into_iter()
+            .map(|(waterway_type, points)| WorldWaterway {
+                points,
+                waterway_type: match waterway_type {
+                    minimap_tiles::WaterwayType::River => WaterwayType::River,
+                    minimap_tiles::WaterwayType::Stream => WaterwayType::Stream,
+                    minimap_tiles::WaterwayType::Canal => WaterwayType::Canal,
+                },
+            })
+            .collect();
+
         renderer.set_roads(roads);
         renderer.set_pois(pois);
+        renderer.set_areas(areas);
+        renderer.set_waterways(waterways);
     }
 }
 
 fn update_ui(ui: &SimulatorWindow, renderer: &MapRenderer, vehicle: &VehicleState) {
     let segments = renderer.render(vehicle);
     let pois = renderer.render_pois(vehicle);
+    let area_triangles = renderer.render_area_triangles(vehicle);
+    let waterways = renderer.render_waterways(vehicle);
 
     static LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     if !LOGGED.swap(true, std::sync::atomic::Ordering::SeqCst) {
         log::info!(
-            "Total road segments: {}, POIs: {}",
+            "Total road segments: {}, POIs: {}, area triangles: {}, waterways: {}",
             segments.len(),
-            pois.len()
+            pois.len(),
+            area_triangles.len(),
+            waterways.len()
         );
     }
 
@@ -284,8 +318,34 @@ fn update_ui(ui: &SimulatorWindow, renderer: &MapRenderer, vehicle: &VehicleStat
         })
         .collect();
 
+    let area_model: Vec<AreaTriangle> = area_triangles
+        .iter()
+        .map(|t| AreaTriangle {
+            x1: t.x1,
+            y1: t.y1,
+            x2: t.x2,
+            y2: t.y2,
+            x3: t.x3,
+            y3: t.y3,
+            area_type: t.area_type,
+        })
+        .collect();
+
+    let waterway_model: Vec<WaterwaySegment> = waterways
+        .iter()
+        .map(|w| WaterwaySegment {
+            x1: w.x1,
+            y1: w.y1,
+            x2: w.x2,
+            y2: w.y2,
+            waterway_type: w.waterway_type,
+        })
+        .collect();
+
     ui.set_roads(ModelRc::new(VecModel::from(road_model)));
     ui.set_pois(ModelRc::new(VecModel::from(poi_model)));
+    ui.set_areas(ModelRc::new(VecModel::from(area_model)));
+    ui.set_waterways(ModelRc::new(VecModel::from(waterway_model)));
 
     ui.set_player(PlayerState {
         heading: vehicle.heading,

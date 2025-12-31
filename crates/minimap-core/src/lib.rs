@@ -101,6 +101,87 @@ pub struct ScreenPoi {
     pub poi_type: i32,
 }
 
+/// Area types for natural features
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum AreaType {
+    Water,   // Lakes, rivers, ponds
+    Forest,  // Forests, woods
+    Park,    // Parks, gardens
+    Grass,   // Meadows, grassland
+}
+
+impl AreaType {
+    pub fn to_int(&self) -> i32 {
+        match self {
+            AreaType::Water => 0,
+            AreaType::Forest => 1,
+            AreaType::Park => 2,
+            AreaType::Grass => 3,
+        }
+    }
+}
+
+/// Waterway types for linear water features
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum WaterwayType {
+    River,   // Major rivers
+    Stream,  // Streams, creeks
+    Canal,   // Canals
+}
+
+impl WaterwayType {
+    pub fn to_int(&self) -> i32 {
+        match self {
+            WaterwayType::River => 0,
+            WaterwayType::Stream => 1,
+            WaterwayType::Canal => 2,
+        }
+    }
+}
+
+/// A waterway (linear water feature) in world coordinates
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorldWaterway {
+    pub points: Vec<(f64, f64)>,  // (lat, lon)
+    pub waterway_type: WaterwayType,
+}
+
+/// A waterway segment transformed to screen coordinates
+#[derive(Debug, Clone)]
+pub struct ScreenWaterway {
+    pub x1: f32,
+    pub y1: f32,
+    pub x2: f32,
+    pub y2: f32,
+    pub waterway_type: i32,
+}
+
+/// An area (polygon) in world coordinates
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorldArea {
+    pub points: Vec<(f64, f64)>,  // (lat, lon)
+    pub area_type: AreaType,
+}
+
+/// An area transformed to screen coordinates
+#[derive(Debug, Clone)]
+pub struct ScreenArea {
+    pub points: Vec<(f32, f32)>,  // (x, y)
+    pub area_type: i32,
+}
+
+/// A single triangle from a triangulated area, ready for Slint rendering
+#[derive(Debug, Clone)]
+pub struct ScreenTriangle {
+    pub x1: f32,
+    pub y1: f32,
+    pub x2: f32,
+    pub y2: f32,
+    pub x3: f32,
+    pub y3: f32,
+    pub area_type: i32,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum RoadType {
     Primary,    // Major roads, highways
@@ -133,6 +214,8 @@ pub struct MapRenderer {
     config: MinimapConfig,
     roads: Vec<WorldRoad>,
     pois: Vec<WorldPoi>,
+    areas: Vec<WorldArea>,
+    waterways: Vec<WorldWaterway>,
 }
 
 impl MapRenderer {
@@ -141,6 +224,8 @@ impl MapRenderer {
             config,
             roads: Vec::new(),
             pois: Vec::new(),
+            areas: Vec::new(),
+            waterways: Vec::new(),
         }
     }
 
@@ -162,6 +247,26 @@ impl MapRenderer {
     /// Get a reference to the loaded POIs
     pub fn pois(&self) -> &[WorldPoi] {
         &self.pois
+    }
+
+    /// Load areas (polygons)
+    pub fn set_areas(&mut self, areas: Vec<WorldArea>) {
+        self.areas = areas;
+    }
+
+    /// Get a reference to the loaded areas
+    pub fn areas(&self) -> &[WorldArea] {
+        &self.areas
+    }
+
+    /// Load waterways (linear water features)
+    pub fn set_waterways(&mut self, waterways: Vec<WorldWaterway>) {
+        self.waterways = waterways;
+    }
+
+    /// Get a reference to the loaded waterways
+    pub fn waterways(&self) -> &[WorldWaterway] {
+        &self.waterways
     }
 
     /// Update configuration
@@ -258,6 +363,149 @@ impl MapRenderer {
         pois
     }
 
+    /// Transform all waterways to screen coordinates based on current vehicle state
+    pub fn render_waterways(&self, vehicle: &VehicleState) -> Vec<ScreenWaterway> {
+        let mut segments = Vec::new();
+
+        let center = Point2::new(
+            self.config.screen_width / 2.0,
+            self.config.screen_height / 2.0,
+        );
+
+        let transform = self.build_transform(vehicle);
+
+        for waterway in &self.waterways {
+            for window in waterway.points.windows(2) {
+                let (lat1, lon1) = window[0];
+                let (lat2, lon2) = window[1];
+
+                let local1 = geo::lat_lon_to_local_meters(
+                    lat1, lon1,
+                    vehicle.latitude, vehicle.longitude,
+                );
+                let local2 = geo::lat_lon_to_local_meters(
+                    lat2, lon2,
+                    vehicle.latitude, vehicle.longitude,
+                );
+
+                let screen1 = transform_point(&transform, &local1, &center, self.config.meters_per_pixel);
+                let screen2 = transform_point(&transform, &local2, &center, self.config.meters_per_pixel);
+
+                let margin = 50.0;
+                if is_segment_visible(
+                    &screen1, &screen2,
+                    self.config.screen_width,
+                    self.config.screen_height,
+                    margin,
+                ) {
+                    segments.push(ScreenWaterway {
+                        x1: screen1.x,
+                        y1: screen1.y,
+                        x2: screen2.x,
+                        y2: screen2.y,
+                        waterway_type: waterway.waterway_type.to_int(),
+                    });
+                }
+            }
+        }
+
+        segments
+    }
+
+    /// Transform all areas to screen coordinates based on current vehicle state
+    pub fn render_areas(&self, vehicle: &VehicleState) -> Vec<ScreenArea> {
+        let mut areas = Vec::new();
+
+        let center = Point2::new(
+            self.config.screen_width / 2.0,
+            self.config.screen_height / 2.0,
+        );
+
+        let transform = self.build_transform(vehicle);
+
+        for area in &self.areas {
+            let screen_points: Vec<(f32, f32)> = area
+                .points
+                .iter()
+                .map(|(lat, lon)| {
+                    let local = geo::lat_lon_to_local_meters(
+                        *lat, *lon,
+                        vehicle.latitude, vehicle.longitude,
+                    );
+                    let screen = transform_point(&transform, &local, &center, self.config.meters_per_pixel);
+                    (screen.x, screen.y)
+                })
+                .collect();
+
+            // Check if any point is visible on screen (simple visibility check)
+            let margin = 100.0;
+            let is_visible = screen_points.iter().any(|(x, y)| {
+                *x >= -margin && *x <= self.config.screen_width + margin
+                    && *y >= -margin && *y <= self.config.screen_height + margin
+            });
+
+            if is_visible && screen_points.len() >= 3 {
+                areas.push(ScreenArea {
+                    points: screen_points,
+                    area_type: area.area_type.to_int(),
+                });
+            }
+        }
+
+        areas
+    }
+
+    /// Transform all areas to screen coordinates and triangulate for Slint rendering
+    pub fn render_area_triangles(&self, vehicle: &VehicleState) -> Vec<ScreenTriangle> {
+        let mut triangles = Vec::new();
+
+        let center = Point2::new(
+            self.config.screen_width / 2.0,
+            self.config.screen_height / 2.0,
+        );
+
+        let transform = self.build_transform(vehicle);
+
+        for area in &self.areas {
+            let screen_points: Vec<(f32, f32)> = area
+                .points
+                .iter()
+                .map(|(lat, lon)| {
+                    let local = geo::lat_lon_to_local_meters(
+                        *lat, *lon,
+                        vehicle.latitude, vehicle.longitude,
+                    );
+                    let screen = transform_point(&transform, &local, &center, self.config.meters_per_pixel);
+                    (screen.x, screen.y)
+                })
+                .collect();
+
+            // Check if any point is visible on screen
+            let margin = 100.0;
+            let is_visible = screen_points.iter().any(|(x, y)| {
+                *x >= -margin && *x <= self.config.screen_width + margin
+                    && *y >= -margin && *y <= self.config.screen_height + margin
+            });
+
+            if is_visible && screen_points.len() >= 3 {
+                let area_type = area.area_type.to_int();
+                for tri in triangulate_polygon(&screen_points) {
+                    triangles.push(ScreenTriangle {
+                        x1: tri[0].0,
+                        y1: tri[0].1,
+                        x2: tri[1].0,
+                        y2: tri[1].1,
+                        x3: tri[2].0,
+                        y3: tri[2].1,
+                        area_type,
+                    });
+                }
+            }
+        }
+
+        triangles
+    }
+
     /// Build the rotation matrix based on heading
     fn build_transform(&self, vehicle: &VehicleState) -> Matrix3<f32> {
         if self.config.rotate_with_heading {
@@ -310,15 +558,34 @@ fn is_segment_visible(
     let max_x = width + margin;
     let min_y = -margin;
     let max_y = height + margin;
-    
+
     // Simple bounding box check (not perfect but fast)
     let seg_min_x = p1.x.min(p2.x);
     let seg_max_x = p1.x.max(p2.x);
     let seg_min_y = p1.y.min(p2.y);
     let seg_max_y = p1.y.max(p2.y);
-    
+
     seg_max_x >= min_x && seg_min_x <= max_x &&
     seg_max_y >= min_y && seg_min_y <= max_y
+}
+
+/// Simple ear-clipping triangulation for convex and simple concave polygons
+/// Returns triangles as [(x1,y1), (x2,y2), (x3,y3)]
+fn triangulate_polygon(points: &[(f32, f32)]) -> Vec<[(f32, f32); 3]> {
+    let mut triangles = Vec::new();
+
+    if points.len() < 3 {
+        return triangles;
+    }
+
+    // For simple cases, use fan triangulation from first vertex
+    // This works well for convex polygons and reasonably convex shapes
+    let anchor = points[0];
+    for i in 1..points.len() - 1 {
+        triangles.push([anchor, points[i], points[i + 1]]);
+    }
+
+    triangles
 }
 
 #[cfg(test)]

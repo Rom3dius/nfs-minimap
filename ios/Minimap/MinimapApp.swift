@@ -14,15 +14,20 @@ func minimap_set_gps_active(_ active: Bool)
 @_silgen_name("minimap_set_status")
 func minimap_set_status(_ text: UnsafePointer<CChar>?)
 
+// Global location manager - must be global so it persists and receives callbacks
+let globalLocationManager = LocationManager()
+
 @main
 struct MinimapApp: App {
-    @StateObject private var locationManager = LocationManager()
-
     init() {
+        // Start location services BEFORE Slint takes over
+        // The permission dialog will appear over Slint's UI
+        globalLocationManager.startUpdating()
+
         // Get bundle path for tiles
         let tilePath = Bundle.main.path(forResource: "tiles", ofType: nil)
 
-        // Initialize Rust library
+        // Initialize Rust library (this blocks with ui.run())
         if let path = tilePath {
             _ = path.withCString { ptr in
                 minimap_init(ptr)
@@ -30,42 +35,39 @@ struct MinimapApp: App {
         } else {
             _ = minimap_init(nil)
         }
-
-        // Start location updates
-        locationManager.startUpdating()
     }
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
-                .environmentObject(locationManager)
+            // Placeholder - Slint takes over the UI
+            Color.black.edgesIgnoringSafeArea(.all)
         }
     }
 }
 
-struct ContentView: View {
-    var body: some View {
-        // The Slint UI is rendered by the Rust library
-        // This SwiftUI view is just a container
-        Color.black
-            .edgesIgnoringSafeArea(.all)
-    }
-}
-
-class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
+class LocationManager: NSObject, CLLocationManagerDelegate {
     private let manager = CLLocationManager()
-    @Published var lastLocation: CLLocation?
-    @Published var lastHeading: CLHeading?
+    var lastLocation: CLLocation?
+    var lastHeading: CLHeading?
 
     override init() {
         super.init()
         manager.delegate = self
-        manager.desiredAccuracy = kCLLocationAccuracyBest
-        manager.distanceFilter = 5 // Update every 5 meters
+        manager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
+        manager.distanceFilter = 5
+        manager.allowsBackgroundLocationUpdates = false
+        manager.pausesLocationUpdatesAutomatically = false
     }
 
     func startUpdating() {
         manager.requestWhenInUseAuthorization()
+
+        // Start updates immediately if already authorized
+        if manager.authorizationStatus == .authorizedWhenInUse ||
+           manager.authorizationStatus == .authorizedAlways {
+            manager.startUpdatingLocation()
+            manager.startUpdatingHeading()
+        }
     }
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
@@ -78,12 +80,15 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
                 minimap_set_status(ptr)
             }
         case .notDetermined:
-            manager.requestWhenInUseAuthorization()
-        default:
+            // Wait for user response
+            break
+        case .denied, .restricted:
             minimap_set_gps_active(false)
-            "GPS Denied".withCString { ptr in
+            "GPS Denied - Enable in Settings".withCString { ptr in
                 minimap_set_status(ptr)
             }
+        @unknown default:
+            break
         }
     }
 
@@ -92,7 +97,7 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         lastLocation = location
 
         let heading = lastHeading?.trueHeading ?? 0
-        let speed = location.speed >= 0 ? location.speed * 3.6 : 0 // m/s to km/h
+        let speed = location.speed >= 0 ? location.speed * 3.6 : 0
 
         minimap_update_gps(
             location.coordinate.latitude,
@@ -105,7 +110,6 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
         lastHeading = newHeading
 
-        // Update with current location and new heading
         if let location = lastLocation {
             let speed = location.speed >= 0 ? location.speed * 3.6 : 0
             minimap_update_gps(
@@ -119,7 +123,7 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         minimap_set_gps_active(false)
-        "GPS Error".withCString { ptr in
+        "GPS Error: \(error.localizedDescription)".withCString { ptr in
             minimap_set_status(ptr)
         }
     }

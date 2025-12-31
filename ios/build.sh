@@ -91,6 +91,9 @@ cp "$SCRIPT_DIR/Minimap/Info.plist" "$APP_DIR/"
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.nfs.minimap" "$APP_DIR/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleName Minimap" "$APP_DIR/Info.plist"
 
+# Create PkgInfo (required by some installers)
+echo -n "APPL????" > "$APP_DIR/PkgInfo"
+
 # Copy tiles if they exist
 if [ -d "$PROJECT_ROOT/tiles" ]; then
     echo "Copying map tiles..."
@@ -103,11 +106,12 @@ echo "Creating IPA..."
 cd "$BUILD_DIR"
 zip -r Minimap-unsigned.ipa Payload
 
-# Optionally sign with ldid if available
+# Sign with ldid if available
 if command -v ldid &> /dev/null; then
     echo ""
     echo "Signing with ldid..."
-    ldid -S "$APP_DIR/Minimap"
+    ldid -S"$SCRIPT_DIR/entitlements.plist" "$APP_DIR/Minimap"
+    cd "$BUILD_DIR"
     zip -r Minimap-signed.ipa Payload
     echo "Created: $BUILD_DIR/Minimap-signed.ipa"
 fi

@@ -5,7 +5,7 @@
 //! For iOS: Uses CoreLocation via objc2 bindings
 //! For Android: Uses android-activity
 
-use minimap_core::{MapRenderer, MinimapConfig, VehicleState, WorldRoad, WorldPoi, RoadType, PoiType};
+use minimap_core::{MapRenderer, MinimapConfig, VehicleState, WorldRoad, WorldPoi, WorldArea, WorldWaterway, RoadType, PoiType, AreaType, WaterwayType};
 use minimap_tiles::loader::TileLoader;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -103,8 +103,37 @@ impl App {
                 })
                 .collect();
 
+            let areas: Vec<WorldArea> = loader
+                .get_areas()
+                .into_iter()
+                .map(|(area_type, points)| WorldArea {
+                    points,
+                    area_type: match area_type {
+                        minimap_tiles::AreaType::Water => AreaType::Water,
+                        minimap_tiles::AreaType::Forest => AreaType::Forest,
+                        minimap_tiles::AreaType::Park => AreaType::Park,
+                        minimap_tiles::AreaType::Grass => AreaType::Grass,
+                    },
+                })
+                .collect();
+
+            let waterways: Vec<WorldWaterway> = loader
+                .get_waterways()
+                .into_iter()
+                .map(|(waterway_type, points)| WorldWaterway {
+                    points,
+                    waterway_type: match waterway_type {
+                        minimap_tiles::WaterwayType::River => WaterwayType::River,
+                        minimap_tiles::WaterwayType::Stream => WaterwayType::Stream,
+                        minimap_tiles::WaterwayType::Canal => WaterwayType::Canal,
+                    },
+                })
+                .collect();
+
             self.renderer.set_roads(roads);
             self.renderer.set_pois(pois);
+            self.renderer.set_areas(areas);
+            self.renderer.set_waterways(waterways);
         }
 
         self.refresh_ui();
@@ -125,6 +154,8 @@ impl App {
         if let Some(ui) = self.ui.upgrade() {
             let segments = self.renderer.render(&self.vehicle);
             let pois = self.renderer.render_pois(&self.vehicle);
+            let area_triangles = self.renderer.render_area_triangles(&self.vehicle);
+            let waterways = self.renderer.render_waterways(&self.vehicle);
 
             let road_model: Vec<RoadSegment> = segments
                 .iter()
@@ -146,8 +177,34 @@ impl App {
                 })
                 .collect();
 
+            let area_model: Vec<AreaTriangle> = area_triangles
+                .iter()
+                .map(|t| AreaTriangle {
+                    x1: t.x1,
+                    y1: t.y1,
+                    x2: t.x2,
+                    y2: t.y2,
+                    x3: t.x3,
+                    y3: t.y3,
+                    area_type: t.area_type,
+                })
+                .collect();
+
+            let waterway_model: Vec<WaterwaySegment> = waterways
+                .iter()
+                .map(|w| WaterwaySegment {
+                    x1: w.x1,
+                    y1: w.y1,
+                    x2: w.x2,
+                    y2: w.y2,
+                    waterway_type: w.waterway_type,
+                })
+                .collect();
+
             ui.set_roads(slint::ModelRc::new(slint::VecModel::from(road_model)));
             ui.set_pois(slint::ModelRc::new(slint::VecModel::from(poi_model)));
+            ui.set_areas(slint::ModelRc::new(slint::VecModel::from(area_model)));
+            ui.set_waterways(slint::ModelRc::new(slint::VecModel::from(waterway_model)));
             ui.set_player(PlayerState {
                 heading: self.vehicle.heading,
                 speed_kmh: self.vehicle.speed_kmh,
