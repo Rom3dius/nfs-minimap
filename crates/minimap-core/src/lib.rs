@@ -5,7 +5,7 @@
 //! - Coordinate transformations (lat/lon to screen, rotation)
 //! - Map styling and theming
 
-use nalgebra::{Matrix3, Point2, Vector2};
+use nalgebra::{Matrix3, Point2};
 use serde::{Deserialize, Serialize};
 
 pub mod geo;

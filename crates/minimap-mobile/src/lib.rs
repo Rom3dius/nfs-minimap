@@ -28,8 +28,8 @@ struct App {
 impl App {
     fn new(tile_dir: Option<&str>) -> Result<(Self, MobileApp), slint::PlatformError> {
         let config = MinimapConfig {
-            screen_width: 400.0,
-            screen_height: 400.0,
+            screen_width: 800.0,   // Must match Slint viewbox dimensions
+            screen_height: 800.0,
             meters_per_pixel: 1.5,
             rotate_with_heading: true,
         };

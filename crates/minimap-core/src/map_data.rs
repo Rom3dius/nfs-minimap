@@ -180,6 +180,7 @@ enum OverpassElement {
     },
     #[serde(rename = "way")]
     Way {
+        #[allow(dead_code)]
         id: i64,
         nodes: Vec<i64>,
         tags: Option<HashMap<String, String>>,
