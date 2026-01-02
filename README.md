@@ -1,31 +1,31 @@
-# NFS2-Style Minimap for ESP32-P4
+# NFS2-Style Minimap
 
-A Need for Speed 2 inspired minimap display built with Rust and Slint, targeting the Waveshare ESP32-P4-WIFI6-Touch-LCD-3.4C (800x800 round display).
+A Need for Speed 2 inspired minimap display built with Rust and Slint. Runs on desktop (simulator), iOS, and targets the Waveshare ESP32-P4-WIFI6-Touch-LCD-3.4C (800x800 round display).
+
+## Features
+
+- **Real OSM data**: Loads roads, POIs, water features, forests, and parks from OpenStreetMap
+- **Custom tile format**: Compact binary tiles for offline use
+- **Multi-platform**: Desktop simulator, iOS app, ESP32-P4 (planned)
+- **Zoom with road filtering**: Automatically hides minor roads when zoomed out to prevent clutter
+- **GPS integration**: Real-time location on iOS, simulated movement on desktop
 
 ## Project Structure
 
 ```
 nfs-minimap/
-├── Cargo.toml              # Workspace configuration
 ├── ui/
-│   └── minimap.slint       # Slint UI definition
+│   └── minimap.slint       # Shared Slint UI definition
 ├── crates/
-│   ├── minimap-core/       # Platform-agnostic map logic
-│   │   ├── src/
-│   │   │   ├── lib.rs      # Main library, renderer
-│   │   │   ├── geo.rs      # Coordinate conversions
-│   │   │   ├── map_data.rs # GeoJSON loading, road data
-│   │   │   └── transform.rs # Viewport transformations
-│   │   └── build.rs        # Slint compilation
-│   │
-│   ├── minimap-simulator/  # Desktop simulator for development
-│   │   └── src/main.rs     # SDL window, fake GPS
-│   │
-│   └── minimap-esp32p4/    # Device firmware (template)
-│       └── src/main.rs     # ESP32-P4 specific code
+│   ├── minimap-core/       # Platform-agnostic map logic & rendering
+│   ├── minimap-tiles/      # Tile format & processor
+│   ├── minimap-simulator/  # Desktop simulator (WASD + zoom)
+│   └── minimap-mobile/     # iOS/Android app with GPS
+├── ios/                    # iOS build scripts & Swift code
+└── tiles/                  # Generated map tiles (gitignored)
 ```
 
-## Quick Start (Simulator)
+## Quick Start
 
 ### Prerequisites
 
@@ -34,126 +34,109 @@ nfs-minimap/
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
    ```
 
-2. **System dependencies** (for Slint's winit backend)
-   
+2. **System dependencies** (for Slint)
+
    **Ubuntu/Debian:**
    ```bash
    sudo apt install libfontconfig1-dev libfreetype6-dev
    ```
-   
+
    **macOS:**
    ```bash
-   # Usually works out of the box with Xcode command line tools
    xcode-select --install
    ```
-   
-   **Windows:**
-   - Visual Studio Build Tools with C++ workload
 
 ### Running the Simulator
 
 ```bash
-cd nfs-minimap
+# Without tiles (uses Overpass API for live data)
 cargo run -p minimap-simulator
+
+# With pre-generated tiles
+cargo run -p minimap-simulator -- tiles/
 ```
 
-This opens an 800x800 window showing the minimap with:
-- Sample road grid
-- Simulated vehicle movement
-- Rotating map based on heading
-- Speed and heading display
+**Controls:**
+- **WASD**: Move and rotate
+- **Q/E**: Zoom in/out
 
-## Using Real Map Data
+### Generating Map Tiles
 
-### Option 1: GeoJSON from OpenStreetMap
+Download OSM data and generate tiles:
 
-1. Go to [Overpass Turbo](https://overpass-turbo.eu/)
-2. Run a query like:
-   ```
-   [out:json];
-   way["highway"]({{bbox}});
-   out geom;
-   ```
-3. Export as GeoJSON
-4. Load in code:
-   ```rust
-   let roads = map_data::load_from_geojson(&json_string)?;
-   renderer.set_roads(roads);
-   ```
+```bash
+# Download Switzerland data (~400MB)
+curl -L -o switzerland.osm.pbf \
+  https://download.geofabrik.de/europe/switzerland-latest.osm.pbf
 
-### Option 2: Pre-processed tiles
+# Generate tiles
+cargo run -p minimap-tiles --release --features processor --bin tile-processor -- \
+  switzerland.osm.pbf tiles/
+```
 
-For larger areas, pre-process OSM data into tiles:
-- Use [tilemaker](https://tilemaker.org/) to create vector tiles
-- Convert to simple JSON format for device storage
-
-## ESP32-P4 Deployment
-
-### Prerequisites
-
-1. **ESP-IDF Rust toolchain**
-   ```bash
-   cargo install espup
-   espup install
-   . ~/export-esp.sh
-   ```
-
-2. **Add the ESP32-P4 crate to workspace**
-   
-   Uncomment in `Cargo.toml`:
-   ```toml
-   members = [
-       "crates/minimap-core",
-       "crates/minimap-simulator",
-       "crates/minimap-esp32p4",  # Uncomment this
-   ]
-   ```
+## iOS App
 
 ### Building
 
+Requires macOS with Xcode Command Line Tools.
+
 ```bash
-cd crates/minimap-esp32p4
-cargo build --release
+# Add iOS target
+rustup target add aarch64-apple-ios
+
+# Build Rust library
+cargo build -p minimap-mobile --target aarch64-apple-ios --release
+
+# Build iOS app (requires tiles to be generated first)
+cd ios && ./build.sh
 ```
 
-### Flashing
+### Installing on Jailbroken Device
+
+The build produces `ios/build/Minimap-signed.ipa` signed with ldid for TrollStore/jailbroken devices:
+
+1. Transfer IPA to device
+2. Install via TrollStore or Filza + AppSync Unified
+
+### GitHub Actions
+
+Push a tag to trigger automated builds:
 
 ```bash
-cargo espflash flash --release --monitor
+git tag ios-v1.0 && git push origin ios-v1.0
 ```
 
 ## Configuration
 
-### Map Settings (`MinimapConfig`)
+### Zoom Levels
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `screen_width` | 800.0 | Display width in pixels |
-| `screen_height` | 800.0 | Display height in pixels |
-| `meters_per_pixel` | 1.5 | Zoom level (~600m visible radius) |
-| `rotate_with_heading` | true | Rotate map with vehicle heading |
+| Setting | Value | Description |
+|---------|-------|-------------|
+| `ZOOM_MIN` | 0.75 m/px | Most zoomed in (~300m radius) |
+| `ZOOM_DEFAULT` | 1.5 m/px | Default view (~600m radius) |
+| `ZOOM_MAX` | 3.0 m/px | Most zoomed out (~1.2km radius) |
 
 ### Color Scheme
 
-Edit `ui/minimap.slint` to customize the NFS2 aesthetic:
+Edit `ui/minimap.slint` to customize colors:
 
 ```slint
-property <NfsColors> colors: {
-    background: #1a1a2e,      // Dark blue background
-    road-primary: #4a90a4,    // Main roads
-    road-secondary: #2d5a6b,  // Side streets
-    road-highlight: #e94560,  // Route highlight
-    player-marker: #f39c12,   // Player triangle
-    text-primary: #eee,       // Text color
-    compass-ring: #4a90a4,    // Compass circle
-};
+export global MinimapColors {
+    out property <color> bg: #1a1a2e;           // Dark blue background
+    out property <color> road-primary: #4a90a4; // Main roads
+    out property <color> road-secondary: #2d5a6b; // Side streets
+    out property <color> player-color: #f39c12; // Player marker
+    // ... more colors
+}
 ```
 
-## Hardware Setup (ESP32-P4)
+## ESP32-P4 (Planned)
 
-### GPS Module
+Target hardware: Waveshare ESP32-P4-WIFI6-Touch-LCD-3.4C (800x800 round display)
 
-Connect a GPS module (e.g., NEO-6M, BN-220) to UART:
+### Hardware Setup
+
+**GPS Module** (e.g., NEO-6M, BN-220):
 
 | GPS Pin | ESP32-P4 Pin |
 |---------|--------------|
@@ -162,41 +145,47 @@ Connect a GPS module (e.g., NEO-6M, BN-220) to UART:
 | VCC | 3.3V |
 | GND | GND |
 
-### SD Card (for map data)
+**SD Card**: Use built-in SDIO 3.0 slot for tile storage.
 
-The board has built-in SDIO 3.0 slot. Store map tiles as:
-```
-/sd/
-└── tiles/
-    └── roads.json
-```
+## Tile Format
+
+Custom binary format (`.bin` files) optimized for embedded use:
+
+- **Magic**: `MMAP` (4 bytes)
+- **Version**: 3 (1 byte)
+- **Data**: bincode-serialized tile data
+
+Each tile covers 0.01° × 0.01° (~1.1km at Swiss latitudes) with ~0.3m coordinate precision.
 
 ## License
 
-This project uses the Slint UI framework which is available under:
+This project uses the Slint UI framework:
 - **GPLv3** - Free for open source projects
 - **Commercial License** - Required for proprietary embedded devices
 
 See [Slint Licensing](https://slint.dev/pricing) for details.
 
-The project code itself is licensed under GPL-3.0-or-later.
+Project code is licensed under GPL-3.0-or-later.
 
 ## Roadmap
 
-- [x] Core map rendering logic
+- [x] Core map rendering
 - [x] Desktop simulator
 - [x] Slint UI with NFS2 styling
-- [ ] ESP32-P4 MIPI-DSI display driver integration
-- [ ] GPS NMEA parsing
-- [ ] SD card tile loading
-- [ ] Touch controls for zoom/pan
-- [ ] Route highlighting
-- [ ] POI markers
+- [x] Custom tile format & processor
+- [x] iOS app with GPS
+- [x] Zoom with road filtering
+- [x] POI markers (gas stations, parking, etc.)
+- [x] Natural areas (water, forests, parks)
+- [x] Waterways (rivers, streams)
+- [ ] ESP32-P4 firmware
+- [ ] Touch controls for ESP32-P4
+- [ ] Route highlighting / navigation
 - [ ] Day/night color schemes
 
 ## Resources
 
 - [Waveshare ESP32-P4 Wiki](https://www.waveshare.com/wiki/ESP32-P4-WIFI6-Touch-LCD-3.4C)
 - [Slint Documentation](https://slint.dev/docs/rust/)
-- [ESP-RS Book](https://docs.esp-rs.org/book/)
 - [OpenStreetMap](https://www.openstreetmap.org/)
+- [Geofabrik Downloads](https://download.geofabrik.de/)

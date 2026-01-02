@@ -1,5 +1,5 @@
 //! minimap-core: Platform-agnostic map rendering logic
-//! 
+//!
 //! This crate contains the core data structures and algorithms for:
 //! - Loading and storing map data (roads, POIs)
 //! - Coordinate transformations (lat/lon to screen, rotation)
@@ -7,6 +7,11 @@
 
 use nalgebra::{Matrix3, Point2};
 use serde::{Deserialize, Serialize};
+
+/// Zoom constraints
+pub const ZOOM_MIN: f32 = 0.75;   // Most zoomed in (~300m radius)
+pub const ZOOM_DEFAULT: f32 = 1.5; // Default (~600m radius)
+pub const ZOOM_MAX: f32 = 3.0;    // Most zoomed out (~1.2km radius, fits in fixed tile radius)
 
 pub mod geo;
 pub mod map_data;
@@ -273,25 +278,45 @@ impl MapRenderer {
     pub fn set_config(&mut self, config: MinimapConfig) {
         self.config = config;
     }
-    
+
+    /// Get current zoom level (meters per pixel)
+    pub fn zoom(&self) -> f32 {
+        self.config.meters_per_pixel
+    }
+
+    /// Set zoom level (clamped to valid range)
+    pub fn set_zoom(&mut self, meters_per_pixel: f32) {
+        self.config.meters_per_pixel = meters_per_pixel.clamp(ZOOM_MIN, ZOOM_MAX);
+    }
+
+    /// Zoom in by a factor (e.g., 0.8 = 20% closer)
+    pub fn zoom_in(&mut self, factor: f32) {
+        self.set_zoom(self.config.meters_per_pixel * factor);
+    }
+
+    /// Zoom out by a factor (e.g., 1.25 = 25% farther)
+    pub fn zoom_out(&mut self, factor: f32) {
+        self.set_zoom(self.config.meters_per_pixel * factor);
+    }
+
     /// Transform all roads to screen coordinates based on current vehicle state
     pub fn render(&self, vehicle: &VehicleState) -> Vec<ScreenSegment> {
         let mut segments = Vec::new();
-        
+
         let center = Point2::new(
             self.config.screen_width / 2.0,
             self.config.screen_height / 2.0,
         );
-        
+
         // Build transformation matrix
         let transform = self.build_transform(vehicle);
-        
+
         for road in &self.roads {
             // Convert road points to screen segments
             for window in road.points.windows(2) {
                 let (lat1, lon1) = window[0];
                 let (lat2, lon2) = window[1];
-                
+
                 // Convert to local meters from vehicle position
                 let local1 = geo::lat_lon_to_local_meters(
                     lat1, lon1,
@@ -301,11 +326,11 @@ impl MapRenderer {
                     lat2, lon2,
                     vehicle.latitude, vehicle.longitude,
                 );
-                
+
                 // Apply transformation (scale, rotate)
                 let screen1 = transform_point(&transform, &local1, &center, self.config.meters_per_pixel);
                 let screen2 = transform_point(&transform, &local2, &center, self.config.meters_per_pixel);
-                
+
                 // Clip to screen bounds (with margin)
                 let margin = 50.0;
                 if is_segment_visible(
@@ -324,7 +349,7 @@ impl MapRenderer {
                 }
             }
         }
-        
+
         segments
     }
 

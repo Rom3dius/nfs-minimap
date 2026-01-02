@@ -150,6 +150,16 @@ impl App {
         }
     }
 
+    fn zoom_in(&mut self) {
+        self.renderer.zoom_in(0.8); // 20% closer
+        self.refresh_ui();
+    }
+
+    fn zoom_out(&mut self) {
+        self.renderer.zoom_out(1.25); // 25% farther
+        self.refresh_ui();
+    }
+
     fn refresh_ui(&self) {
         if let Some(ui) = self.ui.upgrade() {
             let segments = self.renderer.render(&self.vehicle);
@@ -291,6 +301,23 @@ pub extern "C" fn minimap_init(tile_dir: *const std::ffi::c_char) -> bool {
         log::error!("App already initialized");
         return false;
     }
+
+    // Set up zoom callbacks
+    ui.on_zoom_in(|| {
+        if let Some(app) = APP.get() {
+            if let Ok(mut app) = app.lock() {
+                app.zoom_in();
+            }
+        }
+    });
+
+    ui.on_zoom_out(|| {
+        if let Some(app) = APP.get() {
+            if let Ok(mut app) = app.lock() {
+                app.zoom_out();
+            }
+        }
+    });
 
     // Start location updates
     #[cfg(target_os = "ios")]

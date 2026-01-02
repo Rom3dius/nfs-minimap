@@ -1,7 +1,9 @@
-// NFS2-style minimap UI
-// Simplified: roads + player marker + compass letters
+// NFS2-style minimap UI with theming support
 
-// A single road segment to be rendered
+// ============================================================================
+// Data Structures
+// ============================================================================
+
 export struct RoadSegment {
     x1: float,
     y1: float,
@@ -10,14 +12,12 @@ export struct RoadSegment {
     road-type: int,  // 0 = primary, 1 = secondary, 2 = highlight
 }
 
-// A point of interest
 export struct Poi {
     x: float,
     y: float,
     poi-type: int,  // 0 = gas station, 1 = parking, 2 = shopping mall, 3 = car wash
 }
 
-// A waterway segment (linear water feature)
 export struct WaterwaySegment {
     x1: float,
     y1: float,
@@ -26,7 +26,6 @@ export struct WaterwaySegment {
     waterway-type: int,  // 0 = river, 1 = stream, 2 = canal
 }
 
-// A triangulated area (polygon decomposed into triangles for rendering)
 export struct AreaTriangle {
     x1: float,
     y1: float,
@@ -37,7 +36,6 @@ export struct AreaTriangle {
     area-type: int,  // 0 = water, 1 = forest, 2 = park, 3 = grass
 }
 
-// Player position and heading
 export struct PlayerState {
     heading: float,      // Degrees, 0 = North
     speed-kmh: float,
@@ -45,210 +43,1082 @@ export struct PlayerState {
     longitude: float,
 }
 
-// NFS2 color scheme
-export global MinimapColors {
-    out property <color> bg: #1a1a2e;
-    out property <color> road-primary: #4a90a4;
-    out property <color> road-secondary: #2d5a6b;
-    out property <color> road-highlight: #e94560;
-    out property <color> player-color: #f39c12;
-    out property <color> text-color: #eee;
-    out property <color> poi-gas: #e74c3c;      // Red for gas stations
-    out property <color> poi-parking: #3498db;  // Blue for parking
-    out property <color> poi-mall: #9b59b6;     // Purple for shopping malls
-    out property <color> poi-carwash: #1abc9c;  // Teal for car washes
-    // Natural area colors (opaque but muted to blend with background)
-    out property <color> area-water: #1e2a38;     // Muted blue-gray
-    out property <color> area-forest: #1a2620;    // Dark muted green
-    out property <color> area-park: #1e2a22;      // Slightly lighter green
-    out property <color> area-grass: #1f2418;     // Dark olive-brown
-    // Waterway colors (linear water features) - match area-water for consistency
-    out property <color> waterway-river: #1e2a38;   // Same as area-water
-    out property <color> waterway-stream: #1e2a38;  // Same as area-water
-    out property <color> waterway-canal: #1e2a38;   // Same as area-water
+// Theme color structure
+export struct ThemeColors {
+    bg: color,
+    panel-bg: color,
+    road-primary: color,
+    road-secondary: color,
+    road-highlight: color,
+    player-color: color,
+    text-color: color,
+    text-secondary: color,
+    accent: color,
+    poi-gas: color,
+    poi-parking: color,
+    poi-mall: color,
+    poi-carwash: color,
+    area-water: color,
+    area-forest: color,
+    area-park: color,
+    area-grass: color,
 }
 
-// Reusable minimap view component (can be embedded in any container)
+// ============================================================================
+// Theme Definitions
+// ============================================================================
+
+export global ThemeManager {
+    // Current theme index: 0=NFS2, 1=HelloKitty, 2=Wintergreen, 3=Frappe, 4=Mocha, 5=BlackGold
+    in-out property <int> current-theme: 0;
+
+    // Theme names for UI
+    out property <[string]> theme-names: ["NFS2 Classic", "Hello Kitty", "Wintergreen", "Catppuccin Frappe", "Catppuccin Mocha", "Black & Gold"];
+
+    // NFS2 Classic (Default)
+    out property <ThemeColors> theme-nfs2: {
+        bg: #1a1a2e,
+        panel-bg: #2a2a4e,
+        road-primary: #4a90a4,
+        road-secondary: #2d5a6b,
+        road-highlight: #e94560,
+        player-color: #f39c12,
+        text-color: #eeeeee,
+        text-secondary: #888888,
+        accent: #4a90a4,
+        poi-gas: #e74c3c,
+        poi-parking: #3498db,
+        poi-mall: #9b59b6,
+        poi-carwash: #1abc9c,
+        area-water: #1e2a38,
+        area-forest: #1a2620,
+        area-park: #1e2a22,
+        area-grass: #1f2418,
+    };
+
+    // Hello Kitty (Pink/Cute)
+    out property <ThemeColors> theme-hellokitty: {
+        bg: #ffe4ec,
+        panel-bg: #ffb6c1,
+        road-primary: #ff69b4,
+        road-secondary: #ffb6c1,
+        road-highlight: #ff1493,
+        player-color: #ff0066,
+        text-color: #880044,
+        text-secondary: #cc6699,
+        accent: #ff69b4,
+        poi-gas: #ff6b6b,
+        poi-parking: #ff8fab,
+        poi-mall: #c77dff,
+        poi-carwash: #72efdd,
+        area-water: #b8e0ff,
+        area-forest: #98d8aa,
+        area-park: #c8e6c9,
+        area-grass: #dcedc8,
+    };
+
+    // Wintergreen
+    out property <ThemeColors> theme-wintergreen: {
+        bg: #0d1f17,
+        panel-bg: #1a3d2e,
+        road-primary: #4f9e81,
+        road-secondary: #2f7a5e,
+        road-highlight: #89e1c9,
+        player-color: #a6e3a1,
+        text-color: #e8f5e9,
+        text-secondary: #81c784,
+        accent: #4f9e81,
+        poi-gas: #ef5350,
+        poi-parking: #42a5f5,
+        poi-mall: #ab47bc,
+        poi-carwash: #26c6da,
+        area-water: #1a3a4a,
+        area-forest: #1b4332,
+        area-park: #2d5a3d,
+        area-grass: #1e3a28,
+    };
+
+    // Catppuccin Frappe
+    out property <ThemeColors> theme-frappe: {
+        bg: #303446,
+        panel-bg: #414559,
+        road-primary: #8caaee,
+        road-secondary: #626880,
+        road-highlight: #e78284,
+        player-color: #f4b8e4,
+        text-color: #c6d0f5,
+        text-secondary: #a5adce,
+        accent: #ca9ee6,
+        poi-gas: #e78284,
+        poi-parking: #8caaee,
+        poi-mall: #ca9ee6,
+        poi-carwash: #81c8be,
+        area-water: #292c3c,
+        area-forest: #2a3830,
+        area-park: #303840,
+        area-grass: #2e3530,
+    };
+
+    // Catppuccin Mocha
+    out property <ThemeColors> theme-mocha: {
+        bg: #1e1e2e,
+        panel-bg: #313244,
+        road-primary: #89b4fa,
+        road-secondary: #585b70,
+        road-highlight: #f38ba8,
+        player-color: #f5c2e7,
+        text-color: #cdd6f4,
+        text-secondary: #a6adc8,
+        accent: #cba6f7,
+        poi-gas: #f38ba8,
+        poi-parking: #89b4fa,
+        poi-mall: #cba6f7,
+        poi-carwash: #94e2d5,
+        area-water: #181825,
+        area-forest: #1a2520,
+        area-park: #1e2830,
+        area-grass: #1e2520,
+    };
+
+    // Black & Gold
+    out property <ThemeColors> theme-blackgold: {
+        bg: #0a0a0a,
+        panel-bg: #1a1a1a,
+        road-primary: #d4af37,
+        road-secondary: #8b7355,
+        road-highlight: #ffd700,
+        player-color: #ffd700,
+        text-color: #d4af37,
+        text-secondary: #8b7355,
+        accent: #d4af37,
+        poi-gas: #ff6b35,
+        poi-parking: #d4af37,
+        poi-mall: #c9a227,
+        poi-carwash: #b8860b,
+        area-water: #0d1520,
+        area-forest: #101510,
+        area-park: #151a10,
+        area-grass: #12150d,
+    };
+
+    // Active theme (computed based on current-theme)
+    out property <ThemeColors> colors: current-theme == 0 ? theme-nfs2 :
+                                       current-theme == 1 ? theme-hellokitty :
+                                       current-theme == 2 ? theme-wintergreen :
+                                       current-theme == 3 ? theme-frappe :
+                                       current-theme == 4 ? theme-mocha :
+                                       theme-blackgold;
+}
+
+// Legacy global for backwards compatibility
+export global MinimapColors {
+    out property <color> bg: ThemeManager.colors.bg;
+    out property <color> road-primary: ThemeManager.colors.road-primary;
+    out property <color> road-secondary: ThemeManager.colors.road-secondary;
+    out property <color> road-highlight: ThemeManager.colors.road-highlight;
+    out property <color> player-color: ThemeManager.colors.player-color;
+    out property <color> text-color: ThemeManager.colors.text-color;
+    out property <color> poi-gas: ThemeManager.colors.poi-gas;
+    out property <color> poi-parking: ThemeManager.colors.poi-parking;
+    out property <color> poi-mall: ThemeManager.colors.poi-mall;
+    out property <color> poi-carwash: ThemeManager.colors.poi-carwash;
+    out property <color> area-water: ThemeManager.colors.area-water;
+    out property <color> area-forest: ThemeManager.colors.area-forest;
+    out property <color> area-park: ThemeManager.colors.area-park;
+    out property <color> area-grass: ThemeManager.colors.area-grass;
+    out property <color> waterway-river: ThemeManager.colors.area-water;
+    out property <color> waterway-stream: ThemeManager.colors.area-water;
+    out property <color> waterway-canal: ThemeManager.colors.area-water;
+}
+
+// ============================================================================
+// Settings Panel Component
+// ============================================================================
+
+component SettingsPanel inherits Rectangle {
+    in-out property <bool> panel-open: false;
+    callback close();
+
+    width: 100%;
+    height: 100%;
+    background: panel-open ? #00000080 : transparent;
+
+    // Block touches when open
+    TouchArea {
+        enabled: parent.panel-open;
+        clicked => { close(); }
+    }
+
+    // Settings dialog
+    Rectangle {
+        visible: parent.panel-open;
+        width: min(280px, parent.width - 40px);
+        height: min(420px, parent.height - 60px);
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        background: ThemeManager.colors.panel-bg;
+        border-radius: 16px;
+        clip: true;
+
+        TouchArea {
+            // Prevent clicks from closing when clicking on panel
+            clicked => { }
+        }
+
+        VerticalLayout {
+            padding: 16px;
+            spacing: 12px;
+
+            // Header
+            HorizontalLayout {
+                height: 32px;
+                alignment: space-between;
+
+                Text {
+                    text: "Settings";
+                    font-size: 18px;
+                    font-weight: 700;
+                    color: ThemeManager.colors.text-color;
+                    vertical-alignment: center;
+                }
+
+                // Close button
+                Rectangle {
+                    width: 28px;
+                    height: 28px;
+                    border-radius: 14px;
+                    background: ThemeManager.colors.bg;
+
+                    Text {
+                        text: "×";
+                        font-size: 18px;
+                        font-weight: 700;
+                        color: ThemeManager.colors.text-color;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    TouchArea {
+                        clicked => { close(); }
+                    }
+                }
+            }
+
+            // Themes section label
+            Text {
+                text: "Theme";
+                font-size: 12px;
+                font-weight: 600;
+                color: ThemeManager.colors.text-secondary;
+            }
+
+            // Scrollable theme list
+            Flickable {
+                viewport-height: 6 * 40px + 5 * 8px; // 6 themes * height + spacing
+
+                VerticalLayout {
+                    spacing: 8px;
+
+                    // Theme buttons
+                    for theme[index] in ThemeManager.theme-names: Rectangle {
+                        height: 40px;
+                        background: ThemeManager.current-theme == index ? ThemeManager.colors.accent : ThemeManager.colors.bg;
+                        border-radius: 8px;
+                        border-width: ThemeManager.current-theme == index ? 2px : 1px;
+                        border-color: ThemeManager.current-theme == index ? ThemeManager.colors.accent : ThemeManager.colors.text-secondary;
+
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            padding-right: 12px;
+                            alignment: start;
+
+                            Text {
+                                text: theme;
+                                font-size: 13px;
+                                color: ThemeManager.current-theme == index ?
+                                       (ThemeManager.current-theme == 1 ? #880044 : ThemeManager.colors.bg) :
+                                       ThemeManager.colors.text-color;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        TouchArea {
+                            clicked => {
+                                ThemeManager.current-theme = index;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Gear Button Component
+// ============================================================================
+
+component GearButton inherits Rectangle {
+    in property <bool> show: false;
+    callback clicked();
+
+    width: 44px;
+    height: 44px;
+    border-radius: 22px;
+    background: ThemeManager.colors.panel-bg;
+    opacity: show ? 0.9 : 0;
+
+    animate opacity { duration: 300ms; }
+
+    // Gear icon (simplified)
+    Path {
+        x: 10px;
+        y: 10px;
+        width: 24px;
+        height: 24px;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: ThemeManager.colors.text-color;
+
+        // Outer gear teeth
+        MoveTo { x: 12; y: 2; }
+        LineTo { x: 14; y: 2; }
+        LineTo { x: 14.5; y: 5; }
+        LineTo { x: 17; y: 6; }
+        LineTo { x: 19.5; y: 4; }
+        LineTo { x: 21; y: 5.5; }
+        LineTo { x: 19; y: 8; }
+        LineTo { x: 20; y: 10.5; }
+        LineTo { x: 23; y: 11; }
+        LineTo { x: 23; y: 13; }
+        LineTo { x: 20; y: 13.5; }
+        LineTo { x: 19; y: 16; }
+        LineTo { x: 21; y: 18.5; }
+        LineTo { x: 19.5; y: 20; }
+        LineTo { x: 17; y: 18; }
+        LineTo { x: 14.5; y: 19; }
+        LineTo { x: 14; y: 22; }
+        LineTo { x: 10; y: 22; }
+        LineTo { x: 9.5; y: 19; }
+        LineTo { x: 7; y: 18; }
+        LineTo { x: 4.5; y: 20; }
+        LineTo { x: 3; y: 18.5; }
+        LineTo { x: 5; y: 16; }
+        LineTo { x: 4; y: 13.5; }
+        LineTo { x: 1; y: 13; }
+        LineTo { x: 1; y: 11; }
+        LineTo { x: 4; y: 10.5; }
+        LineTo { x: 5; y: 8; }
+        LineTo { x: 3; y: 5.5; }
+        LineTo { x: 4.5; y: 4; }
+        LineTo { x: 7; y: 6; }
+        LineTo { x: 9.5; y: 5; }
+        Close {}
+    }
+
+    // Center circle (hole in gear)
+    Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: 10px;
+        height: 10px;
+        border-radius: 5px;
+        background: ThemeManager.colors.panel-bg;
+    }
+
+    TouchArea {
+        enabled: parent.show;
+        clicked => { root.clicked(); }
+    }
+}
+
+// ============================================================================
+// Info Button Component
+// ============================================================================
+
+component InfoButton inherits Rectangle {
+    in property <bool> show: false;
+    callback clicked();
+
+    width: 44px;
+    height: 44px;
+    border-radius: 22px;
+    background: ThemeManager.colors.panel-bg;
+    opacity: show ? 0.9 : 0;
+
+    animate opacity { duration: 300ms; }
+
+    // Info icon: circle with "i"
+    Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: 24px;
+        height: 24px;
+        border-radius: 12px;
+        border-width: 2px;
+        border-color: ThemeManager.colors.text-color;
+        background: transparent;
+
+        // Letter "i"
+        Text {
+            text: "i";
+            font-size: 16px;
+            font-weight: 700;
+            font-italic: true;
+            color: ThemeManager.colors.text-color;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    TouchArea {
+        enabled: parent.show;
+        clicked => { root.clicked(); }
+    }
+}
+
+// ============================================================================
+// Legend Panel Component
+// ============================================================================
+
+component LegendItem inherits HorizontalLayout {
+    in property <color> item-color;
+    in property <string> label;
+    in property <bool> is-line: false;
+    in property <bool> is-poi: false;
+
+    spacing: 10px;
+    height: 24px;
+
+    // Color indicator
+    Rectangle {
+        width: 24px;
+        height: is-line ? 4px : 16px;
+        y: is-line ? (parent.height - self.height) / 2 : (parent.height - self.height) / 2;
+        border-radius: is-poi ? 8px : (is-line ? 2px : 3px);
+        background: item-color;
+        border-width: is-poi ? 2px : 0;
+        border-color: #fff;
+    }
+
+    // Label
+    Text {
+        text: label;
+        font-size: 12px;
+        color: ThemeManager.colors.text-color;
+        vertical-alignment: center;
+    }
+}
+
+component LegendPanel inherits Rectangle {
+    in-out property <bool> panel-open: false;
+    callback close();
+
+    width: 100%;
+    height: 100%;
+    background: panel-open ? #00000080 : transparent;
+
+    // Block touches when open
+    TouchArea {
+        enabled: parent.panel-open;
+        clicked => { close(); }
+    }
+
+    // Legend dialog
+    Rectangle {
+        visible: parent.panel-open;
+        width: min(260px, parent.width - 40px);
+        height: min(480px, parent.height - 60px);
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        background: ThemeManager.colors.panel-bg;
+        border-radius: 16px;
+        clip: true;
+
+        TouchArea {
+            clicked => { }
+        }
+
+        VerticalLayout {
+            padding: 16px;
+            spacing: 12px;
+
+            // Header
+            HorizontalLayout {
+                height: 32px;
+                alignment: space-between;
+
+                Text {
+                    text: "Legend";
+                    font-size: 18px;
+                    font-weight: 700;
+                    color: ThemeManager.colors.text-color;
+                    vertical-alignment: center;
+                }
+
+                Rectangle {
+                    width: 28px;
+                    height: 28px;
+                    border-radius: 14px;
+                    background: ThemeManager.colors.bg;
+
+                    Text {
+                        text: "×";
+                        font-size: 18px;
+                        font-weight: 700;
+                        color: ThemeManager.colors.text-color;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    TouchArea {
+                        clicked => { close(); }
+                    }
+                }
+            }
+
+            // Scrollable content
+            Flickable {
+                viewport-height: 520px;
+
+                VerticalLayout {
+                    spacing: 16px;
+
+                    // Roads section
+                    VerticalLayout {
+                        spacing: 6px;
+
+                        Text {
+                            text: "Roads";
+                            font-size: 12px;
+                            font-weight: 600;
+                            color: ThemeManager.colors.text-secondary;
+                        }
+
+                        LegendItem {
+                            item-color: ThemeManager.colors.road-primary;
+                            label: "Primary Road";
+                            is-line: true;
+                        }
+                        LegendItem {
+                            item-color: ThemeManager.colors.road-secondary;
+                            label: "Secondary Road";
+                            is-line: true;
+                        }
+                        LegendItem {
+                            item-color: ThemeManager.colors.road-highlight;
+                            label: "Highlighted Route";
+                            is-line: true;
+                        }
+                    }
+
+                    // Waterways section
+                    VerticalLayout {
+                        spacing: 6px;
+
+                        Text {
+                            text: "Waterways";
+                            font-size: 12px;
+                            font-weight: 600;
+                            color: ThemeManager.colors.text-secondary;
+                        }
+
+                        LegendItem {
+                            item-color: ThemeManager.colors.area-water;
+                            label: "River / Canal";
+                            is-line: true;
+                        }
+                        LegendItem {
+                            item-color: ThemeManager.colors.area-water;
+                            label: "Stream";
+                            is-line: true;
+                        }
+                    }
+
+                    // Areas section
+                    VerticalLayout {
+                        spacing: 6px;
+
+                        Text {
+                            text: "Areas";
+                            font-size: 12px;
+                            font-weight: 600;
+                            color: ThemeManager.colors.text-secondary;
+                        }
+
+                        LegendItem {
+                            item-color: ThemeManager.colors.area-water;
+                            label: "Water / Lake";
+                        }
+                        LegendItem {
+                            item-color: ThemeManager.colors.area-forest;
+                            label: "Forest";
+                        }
+                        LegendItem {
+                            item-color: ThemeManager.colors.area-park;
+                            label: "Park";
+                        }
+                        LegendItem {
+                            item-color: ThemeManager.colors.area-grass;
+                            label: "Grassland";
+                        }
+                    }
+
+                    // POIs section
+                    VerticalLayout {
+                        spacing: 6px;
+
+                        Text {
+                            text: "Points of Interest";
+                            font-size: 12px;
+                            font-weight: 600;
+                            color: ThemeManager.colors.text-secondary;
+                        }
+
+                        LegendItem {
+                            item-color: ThemeManager.colors.poi-gas;
+                            label: "Gas Station";
+                            is-poi: true;
+                        }
+                        LegendItem {
+                            item-color: ThemeManager.colors.poi-parking;
+                            label: "Parking";
+                            is-poi: true;
+                        }
+                        LegendItem {
+                            item-color: ThemeManager.colors.poi-mall;
+                            label: "Shopping Mall";
+                            is-poi: true;
+                        }
+                        LegendItem {
+                            item-color: ThemeManager.colors.poi-carwash;
+                            label: "Car Wash";
+                            is-poi: true;
+                        }
+                    }
+
+                    // Player marker
+                    VerticalLayout {
+                        spacing: 6px;
+
+                        Text {
+                            text: "Vehicle";
+                            font-size: 12px;
+                            font-weight: 600;
+                            color: ThemeManager.colors.text-secondary;
+                        }
+
+                        HorizontalLayout {
+                            spacing: 10px;
+                            height: 24px;
+
+                            // Triangle marker
+                            Rectangle {
+                                width: 24px;
+                                height: 16px;
+                                y: (parent.height - self.height) / 2;
+                                background: transparent;
+
+                                Path {
+                                    width: 100%;
+                                    height: 100%;
+                                    fill: ThemeManager.colors.player-color;
+                                    stroke: #fff;
+                                    stroke-width: 1px;
+                                    MoveTo { x: 12; y: 0; }
+                                    LineTo { x: 0; y: 16; }
+                                    LineTo { x: 24; y: 16; }
+                                    Close {}
+                                }
+                            }
+
+                            Text {
+                                text: "Your Position";
+                                font-size: 12px;
+                                color: ThemeManager.colors.text-color;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Status Bar Component (GPS/Speed)
+// ============================================================================
+
+component StatusBar inherits Rectangle {
+    in property <bool> gps-active: false;
+    in property <float> speed-kmh: 0;
+    in property <string> status-text: "";
+
+    height: 40px;
+    background: ThemeManager.colors.panel-bg;
+    border-radius: 8px;
+
+    HorizontalLayout {
+        padding-left: 15px;
+        padding-right: 15px;
+        alignment: space-between;
+
+        // GPS indicator
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: center;
+
+            Rectangle {
+                width: 12px;
+                height: 12px;
+                border-radius: 6px;
+                background: gps-active ? #2ecc71 : #e74c3c;
+            }
+
+            Text {
+                text: gps-active ? "GPS Active" : "No GPS";
+                color: ThemeManager.colors.text-color;
+                font-size: 14px;
+                vertical-alignment: center;
+            }
+        }
+
+        // Speed display
+        Text {
+            text: "\{round(speed-kmh)} km/h";
+            color: ThemeManager.colors.text-color;
+            font-size: 16px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// ============================================================================
+// Zoom Controls Component
+// ============================================================================
+
+component ZoomControls inherits VerticalLayout {
+    callback zoom-in();
+    callback zoom-out();
+
+    spacing: 10px;
+
+    // Zoom in button
+    Rectangle {
+        width: 44px;
+        height: 44px;
+        border-radius: 22px;
+        background: ThemeManager.colors.panel-bg;
+        border-width: 2px;
+        border-color: ThemeManager.colors.accent;
+
+        Text {
+            text: "+";
+            color: ThemeManager.colors.text-color;
+            font-size: 24px;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        TouchArea {
+            clicked => { zoom-in(); }
+        }
+    }
+
+    // Zoom out button
+    Rectangle {
+        width: 44px;
+        height: 44px;
+        border-radius: 22px;
+        background: ThemeManager.colors.panel-bg;
+        border-width: 2px;
+        border-color: ThemeManager.colors.accent;
+
+        Text {
+            text: "-";
+            color: ThemeManager.colors.text-color;
+            font-size: 24px;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        TouchArea {
+            clicked => { zoom-out(); }
+        }
+    }
+}
+
+// ============================================================================
+// Main Minimap View Component
+// ============================================================================
+
 export component MinimapView inherits Rectangle {
     in property <[RoadSegment]> roads: [];
     in property <[Poi]> pois: [];
     in property <[AreaTriangle]> areas: [];
     in property <[WaterwaySegment]> waterways: [];
-    in property <PlayerState> player: {
-        heading: 0,
-        speed-kmh: 0,
-        latitude: 0,
-        longitude: 0
-    };
+    in property <PlayerState> player: { heading: 0, speed-kmh: 0, latitude: 0, longitude: 0 };
 
-    background: MinimapColors.bg;
+    // Optional HUD properties
+    in property <bool> show-hud: false;
+    in property <bool> gps-active: false;
+    in property <string> status-text: "";
 
-    // The map canvas - centered square for perfect circle
-    Rectangle {
-        property <length> size: min(parent.width, parent.height);
-        width: size;
-        height: size;
-        x: (parent.width - size) / 2;
-        y: (parent.height - size) / 2;
-        background: MinimapColors.bg;
+    // Zoom callbacks
+    callback zoom-in();
+    callback zoom-out();
 
-        // Circular mask for round display
-        clip: true;
-        border-radius: size / 2;
+    // UI visibility state
+    property <bool> settings-open: false;
+    property <bool> legend-open: false;
 
-        // Area rendering layer (behind roads) - triangulated polygons
-        for tri in areas: Path {
-            width: 100%;
-            height: 100%;
-            viewbox-x: 0;
-            viewbox-y: 0;
-            viewbox-width: 800;
-            viewbox-height: 800;
+    // Helper: any panel open
+    property <bool> any-panel-open: settings-open || legend-open;
 
-            fill: tri.area-type == 0 ? MinimapColors.area-water :
-                  tri.area-type == 1 ? MinimapColors.area-forest :
-                  tri.area-type == 2 ? MinimapColors.area-park :
-                  MinimapColors.area-grass;
-            stroke-width: 0px;  // No edges visible
+    // Auto-hide mechanism:
+    // - click-count toggles between odd/even
+    // - cycle-value animates between 0 and 1 over 4 seconds
+    // - UI is visible while cycle-value is animating (between 0.01 and 0.99)
+    // - When animation completes (reaches 0 or 1), UI auto-hides
+    property <int> click-count: 0;
+    property <float> cycle-value: mod(click-count, 2) == 1 ? 1.0 : 0.0;
+    animate cycle-value {
+        duration: 4000ms;  // Buttons visible for ~4 seconds
+        easing: linear;
+    }
 
-            MoveTo { x: tri.x1; y: tri.y1; }
-            LineTo { x: tri.x2; y: tri.y2; }
-            LineTo { x: tri.x3; y: tri.y3; }
-            Close {}
+    // UI visible while animating OR while a panel is open
+    property <bool> ui-visible: any-panel-open || (cycle-value > 0.01 && cycle-value < 0.99);
+
+    background: ThemeManager.colors.bg;
+
+    // Interaction detection - increment click-count to restart animation
+    TouchArea {
+        clicked => {
+            if (!any-panel-open) {
+                click-count += 1;
+            }
+        }
+    }
+
+    VerticalLayout {
+        padding: 10px;
+        spacing: 10px;
+
+        // Top status bar (optional)
+        if show-hud: StatusBar {
+            gps-active: root.gps-active;
+            speed-kmh: player.speed-kmh;
+            status-text: root.status-text;
         }
 
-        // Waterway rendering layer (between areas and roads)
-        for ww in waterways: Path {
-            width: 100%;
-            height: 100%;
-            viewbox-x: 0;
-            viewbox-y: 0;
-            viewbox-width: 800;
-            viewbox-height: 800;
-
-            stroke: ww.waterway-type == 0 ? MinimapColors.waterway-river :
-                    ww.waterway-type == 1 ? MinimapColors.waterway-stream :
-                    MinimapColors.waterway-canal;
-            stroke-width: ww.waterway-type == 0 ? 5px :  // Rivers are thicker
-                         ww.waterway-type == 1 ? 2px :   // Streams are thin
-                         4px;                             // Canals are medium
-
-            MoveTo { x: ww.x1; y: ww.y1; }
-            LineTo { x: ww.x2; y: ww.y2; }
-        }
-
-        // Road rendering layer - using viewbox to match screen coordinates
-        for segment in roads: Path {
-            width: 100%;
-            height: 100%;
-            viewbox-x: 0;
-            viewbox-y: 0;
-            viewbox-width: 800;
-            viewbox-height: 800;
-
-            stroke: segment.road-type == 0 ? MinimapColors.road-primary :
-                    segment.road-type == 1 ? MinimapColors.road-secondary :
-                    MinimapColors.road-highlight;
-            stroke-width: segment.road-type == 0 ? 4px :
-                         segment.road-type == 1 ? 2px : 6px;
-
-            MoveTo { x: segment.x1; y: segment.y1; }
-            LineTo { x: segment.x2; y: segment.y2; }
-        }
-
-        // POI markers (circles for all types)
-        // Scale factor to convert 800px coordinates to actual size
-        property <float> scale-factor: size / 800px;
-
-        for poi in pois: Rectangle {
-            property <length> poi-x: poi.x * 1px * scale-factor;
-            property <length> poi-y: poi.y * 1px * scale-factor;
-            width: 14px;
-            height: 14px;
-            x: poi-x - self.width / 2;
-            y: poi-y - self.height / 2;
-            border-radius: 7px;  // Circle
-            background: poi.poi-type == 0 ? MinimapColors.poi-gas :
-                        poi.poi-type == 1 ? MinimapColors.poi-parking :
-                        poi.poi-type == 2 ? MinimapColors.poi-mall :
-                        MinimapColors.poi-carwash;
-            border-width: 2px;
-            border-color: #fff;
-        }
-
-        // Player marker (small triangle at center, pointing up)
+        // Main map area
         Rectangle {
-            width: 12px;
-            height: 12px;
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
+            // Map canvas
+            Rectangle {
+                property <length> size: min(parent.width, parent.height);
+                width: size;
+                height: size;
+                x: (parent.width - size) / 2;
+                y: (parent.height - size) / 2;
+                background: ThemeManager.colors.bg;
+                clip: true;
+                border-radius: size / 2;
 
-            Path {
-                width: 100%;
-                height: 100%;
-                fill: MinimapColors.player-color;
-                stroke: #fff;
-                stroke-width: 1px;
+                // Area rendering layer
+                for tri in areas: Path {
+                    width: 100%;
+                    height: 100%;
+                    viewbox-x: 0;
+                    viewbox-y: 0;
+                    viewbox-width: 800;
+                    viewbox-height: 800;
+                    fill: tri.area-type == 0 ? ThemeManager.colors.area-water :
+                          tri.area-type == 1 ? ThemeManager.colors.area-forest :
+                          tri.area-type == 2 ? ThemeManager.colors.area-park :
+                          ThemeManager.colors.area-grass;
+                    stroke-width: 0px;
+                    MoveTo { x: tri.x1; y: tri.y1; }
+                    LineTo { x: tri.x2; y: tri.y2; }
+                    LineTo { x: tri.x3; y: tri.y3; }
+                    Close {}
+                }
 
-                MoveTo { x: 6; y: 0; }
-                LineTo { x: 0; y: 12; }
-                LineTo { x: 12; y: 12; }
-                Close {}
+                // Waterway rendering layer
+                for ww in waterways: Path {
+                    width: 100%;
+                    height: 100%;
+                    viewbox-x: 0;
+                    viewbox-y: 0;
+                    viewbox-width: 800;
+                    viewbox-height: 800;
+                    stroke: ThemeManager.colors.area-water;
+                    stroke-width: ww.waterway-type == 0 ? 5px : ww.waterway-type == 1 ? 2px : 4px;
+                    MoveTo { x: ww.x1; y: ww.y1; }
+                    LineTo { x: ww.x2; y: ww.y2; }
+                }
+
+                // Road rendering layer
+                for segment in roads: Path {
+                    width: 100%;
+                    height: 100%;
+                    viewbox-x: 0;
+                    viewbox-y: 0;
+                    viewbox-width: 800;
+                    viewbox-height: 800;
+                    stroke: segment.road-type == 0 ? ThemeManager.colors.road-primary :
+                            segment.road-type == 1 ? ThemeManager.colors.road-secondary :
+                            ThemeManager.colors.road-highlight;
+                    stroke-width: segment.road-type == 0 ? 4px : segment.road-type == 1 ? 2px : 6px;
+                    MoveTo { x: segment.x1; y: segment.y1; }
+                    LineTo { x: segment.x2; y: segment.y2; }
+                }
+
+                // POI markers
+                property <float> scale-factor: self.size / 800px;
+                for poi in pois: Rectangle {
+                    property <length> poi-x: poi.x * 1px * parent.scale-factor;
+                    property <length> poi-y: poi.y * 1px * parent.scale-factor;
+                    width: 14px;
+                    height: 14px;
+                    x: poi-x - self.width / 2;
+                    y: poi-y - self.height / 2;
+                    border-radius: 7px;
+                    background: poi.poi-type == 0 ? ThemeManager.colors.poi-gas :
+                                poi.poi-type == 1 ? ThemeManager.colors.poi-parking :
+                                poi.poi-type == 2 ? ThemeManager.colors.poi-mall :
+                                ThemeManager.colors.poi-carwash;
+                    border-width: 2px;
+                    border-color: #fff;
+                }
+
+                // Player marker
+                Rectangle {
+                    width: 12px;
+                    height: 12px;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    Path {
+                        width: 100%;
+                        height: 100%;
+                        fill: ThemeManager.colors.player-color;
+                        stroke: #fff;
+                        stroke-width: 1px;
+                        MoveTo { x: 6; y: 0; }
+                        LineTo { x: 0; y: 12; }
+                        LineTo { x: 12; y: 12; }
+                        Close {}
+                    }
+                }
+
+                // Compass letters
+                property <length> compass-radius: self.size / 2 - 30px;
+                property <angle> heading-angle: -player.heading * 1deg;
+
+                Text {
+                    property <angle> angle: parent.heading-angle;
+                    x: parent.width / 2 - self.width / 2 + parent.compass-radius * sin(angle);
+                    y: parent.height / 2 - self.height / 2 - parent.compass-radius * cos(angle);
+                    text: "N";
+                    font-size: 24px;
+                    font-weight: 700;
+                    color: ThemeManager.colors.text-color;
+                }
+
+                Text {
+                    property <angle> angle: parent.heading-angle + 180deg;
+                    x: parent.width / 2 - self.width / 2 + parent.compass-radius * sin(angle);
+                    y: parent.height / 2 - self.height / 2 - parent.compass-radius * cos(angle);
+                    text: "S";
+                    font-size: 24px;
+                    font-weight: 700;
+                    color: ThemeManager.colors.text-color;
+                }
+
+                Text {
+                    property <angle> angle: parent.heading-angle + 90deg;
+                    x: parent.width / 2 - self.width / 2 + parent.compass-radius * sin(angle);
+                    y: parent.height / 2 - self.height / 2 - parent.compass-radius * cos(angle);
+                    text: "E";
+                    font-size: 24px;
+                    font-weight: 700;
+                    color: ThemeManager.colors.text-color;
+                }
+
+                Text {
+                    property <angle> angle: parent.heading-angle - 90deg;
+                    x: parent.width / 2 - self.width / 2 + parent.compass-radius * sin(angle);
+                    y: parent.height / 2 - self.height / 2 - parent.compass-radius * cos(angle);
+                    text: "W";
+                    font-size: 24px;
+                    font-weight: 700;
+                    color: ThemeManager.colors.text-color;
+                }
+            }
+
+            // Gear button (top-left)
+            GearButton {
+                x: 15px;
+                y: 15px;
+                show: ui-visible && !any-panel-open;
+                clicked => { settings-open = true; }
+            }
+
+            // Info button (top-left, below gear)
+            InfoButton {
+                x: 15px;
+                y: 15px + 44px + 10px;
+                show: ui-visible && !any-panel-open;
+                clicked => { legend-open = true; }
+            }
+
+            // Zoom controls (right side, centered)
+            ZoomControls {
+                x: parent.width - 44px - 15px;
+                y: (parent.height - self.preferred-height) / 2;
+                visible: ui-visible && !any-panel-open;
+                zoom-in => { root.zoom-in(); }
+                zoom-out => { root.zoom-out(); }
             }
         }
 
-        // Rotating compass - positions based on heading
-        // Radius from center for compass letters
-        property <length> compass-radius: size / 2 - 30px;
-        property <angle> heading-angle: -player.heading * 1deg;
+        // Bottom status bar (optional)
+        if show-hud: Rectangle {
+            height: 30px;
+            background: ThemeManager.colors.panel-bg;
+            border-radius: 8px;
 
-        // Compass: N
-        Text {
-            property <angle> angle: heading-angle;
-            x: parent.width / 2 - self.width / 2 + compass-radius * sin(angle);
-            y: parent.height / 2 - self.height / 2 - compass-radius * cos(angle);
-            text: "N";
-            font-size: 24px;
-            font-weight: 700;
-            color: MinimapColors.text-color;
+            Text {
+                text: status-text;
+                color: ThemeManager.colors.text-secondary;
+                font-size: 12px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
         }
+    }
 
-        // Compass: S
-        Text {
-            property <angle> angle: heading-angle + 180deg;
-            x: parent.width / 2 - self.width / 2 + compass-radius * sin(angle);
-            y: parent.height / 2 - self.height / 2 - compass-radius * cos(angle);
-            text: "S";
-            font-size: 24px;
-            font-weight: 700;
-            color: MinimapColors.text-color;
-        }
+    // Settings overlay
+    SettingsPanel {
+        panel-open: settings-open;
+        close => { settings-open = false; }
+    }
 
-        // Compass: E
-        Text {
-            property <angle> angle: heading-angle + 90deg;
-            x: parent.width / 2 - self.width / 2 + compass-radius * sin(angle);
-            y: parent.height / 2 - self.height / 2 - compass-radius * cos(angle);
-            text: "E";
-            font-size: 24px;
-            font-weight: 700;
-            color: MinimapColors.text-color;
-        }
-
-        // Compass: W
-        Text {
-            property <angle> angle: heading-angle - 90deg;
-            x: parent.width / 2 - self.width / 2 + compass-radius * sin(angle);
-            y: parent.height / 2 - self.height / 2 - compass-radius * cos(angle);
-            text: "W";
-            font-size: 24px;
-            font-weight: 700;
-            color: MinimapColors.text-color;
-        }
+    // Legend overlay
+    LegendPanel {
+        panel-open: legend-open;
+        close => { legend-open = false; }
     }
 }
 
+// ============================================================================
 // Window wrapper for standalone use (ESP32)
+// ============================================================================
+
 export component Minimap inherits Window {
     in property <[RoadSegment]> roads <=> view.roads;
     in property <[Poi]> pois <=> view.pois;
@@ -256,8 +1126,11 @@ export component Minimap inherits Window {
     in property <[WaterwaySegment]> waterways <=> view.waterways;
     in property <PlayerState> player <=> view.player;
 
+    callback zoom-in <=> view.zoom-in;
+    callback zoom-out <=> view.zoom-out;
+
     title: "NFS2 Minimap";
-    background: MinimapColors.bg;
+    background: ThemeManager.colors.bg;
     preferred-width: 800px;
     preferred-height: 800px;
     min-width: 400px;

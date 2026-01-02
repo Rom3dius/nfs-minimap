@@ -14,6 +14,8 @@
 //! - S: Move backward
 //! - A: Rotate left
 //! - D: Rotate right
+//! - Q: Zoom in
+//! - E: Zoom out
 
 use minimap_core::{
     map_data::{self, BoundingBox},
@@ -117,6 +119,17 @@ fn main() {
         keys_clone.borrow_mut().remove(&key.to_lowercase());
     });
 
+    // Set up zoom button handlers
+    let renderer_zoom_in = renderer.clone();
+    ui.on_zoom_in(move || {
+        renderer_zoom_in.borrow_mut().zoom_in(0.8);
+    });
+
+    let renderer_zoom_out = renderer.clone();
+    ui.on_zoom_out(move || {
+        renderer_zoom_out.borrow_mut().zoom_out(1.25);
+    });
+
     // Set up animation timer
     let ui_weak = ui.as_weak();
     let vehicle_clone = vehicle.clone();
@@ -169,6 +182,16 @@ fn main() {
                 veh.longitude -= heading_rad.sin() * distance / meters_per_degree_lon;
             }
 
+            // Handle zoom (Q = zoom in, E = zoom out)
+            // Zoom factor per second: 2x
+            let zoom_speed = 2.0_f32.powf(dt as f32);
+            if keys.contains("q") {
+                renderer_clone.borrow_mut().zoom_in(1.0 / zoom_speed);
+            }
+            if keys.contains("e") {
+                renderer_clone.borrow_mut().zoom_out(zoom_speed);
+            }
+
             drop(keys);
 
             // Update tiles periodically (every 500ms)
@@ -189,7 +212,7 @@ fn main() {
         },
     );
 
-    log::info!("Simulator ready. Use WASD to move around the map.");
+    log::info!("Simulator ready. WASD=move, Q/E=zoom");
     ui.run().unwrap();
 }
 
@@ -214,7 +237,7 @@ fn load_from_overpass(renderer: &mut MapRenderer, lat: f64, lon: f64) {
 
 fn update_map_from_source(source: &mut MapSource, renderer: &mut MapRenderer, lat: f64, lon: f64) {
     if let MapSource::Tiles(loader) = source {
-        // Load visible tiles (roughly 1km radius = 0.01 degrees)
+        // Load visible tiles (roughly 1.2km radius = 0.015 degrees)
         loader.load_visible(lat, lon, 0.015);
 
         // Convert tile data to renderer format

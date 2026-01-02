@@ -1,5 +1,7 @@
 // Simulator wrapper - adds keyboard controls for desktop testing
-import { MinimapView, RoadSegment, PlayerState, MinimapColors, Poi, AreaTriangle, WaterwaySegment } from "../../../ui/minimap.slint";
+// Uses shared components from minimap.slint with theming and settings
+
+import { MinimapView, RoadSegment, PlayerState, MinimapColors, Poi, AreaTriangle, WaterwaySegment, ThemeManager } from "../../../ui/minimap.slint";
 
 export { RoadSegment, PlayerState, Poi, AreaTriangle, WaterwaySegment }
 
@@ -10,17 +12,34 @@ export component SimulatorWindow inherits Window {
     in property <[WaterwaySegment]> waterways <=> map.waterways;
     in property <PlayerState> player <=> map.player;
 
+    // Keyboard callbacks for movement
     callback key-pressed(string);
     callback key-released(string);
 
+    // Zoom callbacks (forwarded to shared MinimapView)
+    callback zoom-in <=> map.zoom-in;
+    callback zoom-out <=> map.zoom-out;
+
     title: "NFS2 Minimap Simulator";
-    background: MinimapColors.bg;
+    background: ThemeManager.colors.bg;
     preferred-width: 800px;
     preferred-height: 800px;
 
-    FocusScope {
+    // Forward focus to the keyboard handler
+    forward-focus: keyboard-handler;
+
+    // Map view
+    map := MinimapView {
         width: 100%;
         height: 100%;
+    }
+
+    // Keyboard handler (initially focused via forward-focus)
+    keyboard-handler := FocusScope {
+        x: 0;
+        y: 0;
+        width: 0;
+        height: 0;
 
         key-pressed(event) => {
             key-pressed(event.text);
@@ -29,11 +48,6 @@ export component SimulatorWindow inherits Window {
         key-released(event) => {
             key-released(event.text);
             accept
-        }
-
-        map := MinimapView {
-            width: 100%;
-            height: 100%;
         }
     }
 }
