@@ -36,6 +36,12 @@ export struct AreaTriangle {
     area-type: int,  // 0 = water, 1 = forest, 2 = park, 3 = grass
 }
 
+// Lane guidance for Waze-style junction display
+export struct LaneDisplay {
+    turn-type: int,       // 0=none, 1=left, 2=slight-left, 3=through, 4=slight-right, 5=right, 6=uturn
+    is-recommended: bool, // Should this lane be highlighted
+}
+
 export struct PlayerState {
     heading: float,      // Degrees, 0 = North
     speed-kmh: float,
@@ -62,6 +68,10 @@ export struct ThemeColors {
     area-forest: color,
     area-park: color,
     area-grass: color,
+    // Lane guidance colors
+    lane-recommended: color,
+    lane-other: color,
+    junction-bg: color,
 }
 
 // ============================================================================
@@ -94,6 +104,9 @@ export global ThemeManager {
         area-forest: #1a2620,
         area-park: #1e2a22,
         area-grass: #1f2418,
+        lane-recommended: #4cd964,
+        lane-other: #555577,
+        junction-bg: #1a1a2ecc,
     };
 
     // Hello Kitty (Pink/Cute)
@@ -115,6 +128,9 @@ export global ThemeManager {
         area-forest: #98d8aa,
         area-park: #c8e6c9,
         area-grass: #dcedc8,
+        lane-recommended: #2ecc71,
+        lane-other: #ffb6c1,
+        junction-bg: #ffe4eccc,
     };
 
     // Wintergreen
@@ -136,6 +152,9 @@ export global ThemeManager {
         area-forest: #1b4332,
         area-park: #2d5a3d,
         area-grass: #1e3a28,
+        lane-recommended: #89e1c9,
+        lane-other: #2f7a5e,
+        junction-bg: #0d1f17cc,
     };
 
     // Catppuccin Frappe
@@ -157,6 +176,9 @@ export global ThemeManager {
         area-forest: #2a3830,
         area-park: #303840,
         area-grass: #2e3530,
+        lane-recommended: #a6d189,
+        lane-other: #626880,
+        junction-bg: #303446cc,
     };
 
     // Catppuccin Mocha
@@ -178,6 +200,9 @@ export global ThemeManager {
         area-forest: #1a2520,
         area-park: #1e2830,
         area-grass: #1e2520,
+        lane-recommended: #a6e3a1,
+        lane-other: #585b70,
+        junction-bg: #1e1e2ecc,
     };
 
     // Black & Gold
@@ -199,6 +224,9 @@ export global ThemeManager {
         area-forest: #101510,
         area-park: #151a10,
         area-grass: #12150d,
+        lane-recommended: #ffd700,
+        lane-other: #444444,
+        junction-bg: #0a0a0acc,
     };
 
     // Active theme (computed based on current-theme)
@@ -853,6 +881,160 @@ component ZoomControls inherits VerticalLayout {
 }
 
 // ============================================================================
+// Junction View Component (Waze-style lane guidance)
+// ============================================================================
+
+component LaneArrow inherits Rectangle {
+    in property <int> turn-type: 3;  // 0=none, 1=left, 2=slight-left, 3=through, 4=slight-right, 5=right, 6=uturn
+    in property <bool> is-recommended: false;
+
+    width: 36px;
+    height: 50px;
+    background: transparent;
+
+    // Lane box
+    Rectangle {
+        width: 32px;
+        height: 32px;
+        x: (parent.width - self.width) / 2;
+        y: parent.height - self.height - 4px;
+        border-radius: 4px;
+        background: is-recommended ? ThemeManager.colors.lane-recommended : ThemeManager.colors.lane-other;
+        border-width: is-recommended ? 2px : 1px;
+        border-color: is-recommended ? ThemeManager.colors.text-color : ThemeManager.colors.text-secondary;
+    }
+
+    // Arrow path - drawn based on turn-type
+    Path {
+        width: 24px;
+        height: 40px;
+        x: (parent.width - self.width) / 2;
+        y: 2px;
+        viewbox-width: 24;
+        viewbox-height: 40;
+        stroke: is-recommended ? ThemeManager.colors.text-color : ThemeManager.colors.text-secondary;
+        stroke-width: 2.5px;
+        fill: transparent;
+
+        // Vertical stem
+        MoveTo { x: 12; y: 40; }
+        LineTo { x: 12; y: 15; }
+
+        // Arrowhead based on turn type
+        // Through (3)
+        LineTo { x: turn-type == 3 ? 12 : turn-type == 1 ? 4 : turn-type == 2 ? 7 : turn-type == 4 ? 17 : turn-type == 5 ? 20 : 12;
+                 y: turn-type == 3 ? 5 : turn-type == 6 ? 15 : 10; }
+    }
+
+    // Arrowhead triangle
+    Path {
+        width: 24px;
+        height: 40px;
+        x: (parent.width - self.width) / 2;
+        y: 2px;
+        viewbox-width: 24;
+        viewbox-height: 40;
+        fill: is-recommended ? ThemeManager.colors.text-color : ThemeManager.colors.text-secondary;
+
+        // Left arrow (1)
+        MoveTo { x: turn-type == 1 ? 4 : turn-type == 2 ? 7 : turn-type == 3 ? 12 : turn-type == 4 ? 17 : turn-type == 5 ? 20 : 12;
+                 y: turn-type == 3 ? 5 : turn-type == 6 ? 8 : 10; }
+        LineTo { x: turn-type == 1 ? 4 : turn-type == 2 ? 4 : turn-type == 3 ? 6 : turn-type == 4 ? 20 : turn-type == 5 ? 20 : 6;
+                 y: turn-type == 3 ? 12 : turn-type == 6 ? 15 : turn-type == 1 ? 17 : turn-type == 5 ? 17 : 14; }
+        LineTo { x: turn-type == 1 ? 11 : turn-type == 2 ? 10 : turn-type == 3 ? 18 : turn-type == 4 ? 14 : turn-type == 5 ? 13 : 18;
+                 y: turn-type == 3 ? 12 : turn-type == 6 ? 8 : turn-type == 1 ? 10 : turn-type == 5 ? 10 : 14; }
+        Close {}
+    }
+}
+
+component JunctionView inherits Rectangle {
+    in property <bool> show: false;
+    in property <[LaneDisplay]> lanes: [];
+    in property <string> destination: "";
+    in property <float> distance-m: 0;
+    in property <int> turn-type: 3;  // Fallback when no lane data
+
+    width: 100%;
+    height: 140px;
+    background: ThemeManager.colors.junction-bg;
+    border-radius: 12px;
+    opacity: show ? 1.0 : 0.0;
+    visible: show;
+
+    animate opacity { duration: 200ms; }
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 8px;
+        alignment: center;
+
+        // Destination sign (if available)
+        if destination != "": Rectangle {
+            height: 24px;
+            background: #006600;
+            border-radius: 4px;
+            max-width: parent.width - 24px;
+
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                alignment: center;
+
+                Text {
+                    text: "→ " + destination;
+                    font-size: 14px;
+                    font-weight: 600;
+                    color: #ffffff;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+        }
+
+        // Lane display area
+        HorizontalLayout {
+            height: 54px;
+            alignment: center;
+            spacing: 4px;
+
+            // Show lanes if available, otherwise show simple turn arrow
+            if lanes.length > 0: HorizontalLayout {
+                spacing: 4px;
+                alignment: center;
+
+                for lane[idx] in lanes: LaneArrow {
+                    turn-type: lane.turn-type;
+                    is-recommended: lane.is-recommended;
+                }
+            }
+
+            // Fallback: single arrow when no lane data
+            if lanes.length == 0: LaneArrow {
+                turn-type: turn-type;
+                is-recommended: true;
+            }
+        }
+
+        // Distance badge
+        Rectangle {
+            height: 28px;
+            max-width: 100px;
+            background: ThemeManager.colors.panel-bg;
+            border-radius: 14px;
+
+            Text {
+                text: distance-m < 1000 ? "\{round(distance-m)}m" : "\{round(distance-m / 100) / 10}km";
+                font-size: 14px;
+                font-weight: 700;
+                color: ThemeManager.colors.text-color;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+// ============================================================================
 // Main Minimap View Component
 // ============================================================================
 
@@ -867,6 +1049,13 @@ export component MinimapView inherits Rectangle {
     in property <bool> show-hud: false;
     in property <bool> gps-active: false;
     in property <string> status-text: "";
+
+    // Navigation / Junction guidance properties
+    in property <bool> junction-visible: false;
+    in property <[LaneDisplay]> junction-lanes: [];
+    in property <string> junction-destination: "";
+    in property <float> junction-distance-m: 0;
+    in property <int> junction-turn-type: 3;  // Fallback turn type when no lane data
 
     // Zoom callbacks
     callback zoom-in();
@@ -1084,6 +1273,18 @@ export component MinimapView inherits Rectangle {
                 zoom-in => { root.zoom-in(); }
                 zoom-out => { root.zoom-out(); }
             }
+
+            // Junction view (bottom, Waze-style lane guidance)
+            JunctionView {
+                x: (parent.width - self.width) / 2 + 40px;
+                y: parent.height - self.height - 20px;
+                width: min(320px, parent.width - 100px);
+                show: junction-visible && !any-panel-open;
+                lanes: junction-lanes;
+                destination: junction-destination;
+                distance-m: junction-distance-m;
+                turn-type: junction-turn-type;
+            }
         }
 
         // Bottom status bar (optional)
@@ -1125,6 +1326,13 @@ export component Minimap inherits Window {
     in property <[AreaTriangle]> areas <=> view.areas;
     in property <[WaterwaySegment]> waterways <=> view.waterways;
     in property <PlayerState> player <=> view.player;
+
+    // Navigation / Junction guidance properties
+    in property <bool> junction-visible <=> view.junction-visible;
+    in property <[LaneDisplay]> junction-lanes <=> view.junction-lanes;
+    in property <string> junction-destination <=> view.junction-destination;
+    in property <float> junction-distance-m <=> view.junction-distance-m;
+    in property <int> junction-turn-type <=> view.junction-turn-type;
 
     callback zoom-in <=> view.zoom-in;
     callback zoom-out <=> view.zoom-out;

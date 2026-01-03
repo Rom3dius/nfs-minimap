@@ -101,6 +101,96 @@ struct WaterRelation {
     outer_ways: Vec<i64>,
 }
 
+/// Road metadata extracted from OSM tags
+struct RoadMetadata {
+    way_id: i64,
+    node_ids: Vec<i64>,
+    road_type: RoadType,
+    oneway: i8,
+    speed_class: u8,
+    lane_count: u8,
+    turn_lanes: Option<Vec<LaneTurn>>,
+    dest_lanes: Option<Vec<String>>,
+}
+
+/// Parse OSM turn:lanes tag value into LaneTurn enum values
+/// Format: "left|through|right" or "slight_left|through;right|right"
+fn parse_turn_lanes(value: &str) -> Vec<LaneTurn> {
+    value
+        .split('|')
+        .map(|lane| {
+            // Take the first direction if there are multiple (e.g., "through;right")
+            let dir = lane.split(';').next().unwrap_or("");
+            match dir.trim() {
+                "left" => LaneTurn::Left,
+                "slight_left" => LaneTurn::SlightLeft,
+                "through" | "none" | "" => LaneTurn::Through,
+                "slight_right" => LaneTurn::SlightRight,
+                "right" => LaneTurn::Right,
+                "reverse" => LaneTurn::UTurn,
+                "merge_to_left" => LaneTurn::MergeLeft,
+                "merge_to_right" => LaneTurn::MergeRight,
+                _ => LaneTurn::None,
+            }
+        })
+        .collect()
+}
+
+/// Parse OSM destination:lanes tag value into destination strings
+/// Format: "City A|City B|City C" or "A1: Zürich|A1: Bern"
+fn parse_dest_lanes(value: &str) -> Vec<String> {
+    value.split('|').map(|s| s.trim().to_string()).collect()
+}
+
+/// Parse maxspeed tag to speed class
+/// 0=unknown, 1=slow(<30), 2=urban(30-50), 3=fast(50-80), 4=highway(>80)
+fn parse_speed_class(maxspeed: Option<&str>, highway: &str) -> u8 {
+    if let Some(speed_str) = maxspeed {
+        // Try to parse numeric value (ignoring units like "mph" or "km/h")
+        let speed: Option<u32> = speed_str
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect::<String>()
+            .parse()
+            .ok();
+
+        if let Some(speed) = speed {
+            return match speed {
+                0..=29 => 1,   // slow
+                30..=50 => 2,  // urban
+                51..=80 => 3,  // fast
+                _ => 4,        // highway
+            };
+        }
+    }
+
+    // Default based on highway type
+    match highway {
+        "motorway" | "motorway_link" | "trunk" | "trunk_link" => 4,
+        "primary" | "primary_link" => 3,
+        "secondary" | "secondary_link" | "tertiary" | "tertiary_link" => 2,
+        "residential" | "unclassified" | "living_street" | "service" => 1,
+        _ => 0,
+    }
+}
+
+/// Parse oneway tag to i8
+/// -1=reverse only, 0=both directions, 1=forward only
+fn parse_oneway(oneway: Option<&str>, highway: &str) -> i8 {
+    match oneway {
+        Some("yes") | Some("true") | Some("1") => 1,
+        Some("-1") | Some("reverse") => -1,
+        Some("no") | Some("false") | Some("0") => 0,
+        _ => {
+            // Default based on highway type
+            match highway {
+                "motorway" | "motorway_link" => 1, // Motorways are implicitly oneway
+                _ => 0,
+            }
+        }
+    }
+}
+
 /// Collect way IDs from water relations (lakes, rivers as multipolygons)
 fn collect_water_relation_ways(path: &str) -> (HashSet<i64>, HashMap<i64, WaterRelation>) {
     let reader = ElementReader::from_path(path).expect("Failed to open PBF");
@@ -317,8 +407,28 @@ fn process_ways_and_relations(
                         _ => return,
                     };
 
+                    // Extract routing metadata from tags
+                    let oneway_tag = tags.iter().find(|(k, _)| *k == "oneway").map(|(_, v)| *v);
+                    let maxspeed = tags.iter().find(|(k, _)| *k == "maxspeed").map(|(_, v)| *v);
+                    let lanes_tag = tags.iter().find(|(k, _)| *k == "lanes").map(|(_, v)| *v);
+                    let turn_lanes_tag = tags.iter().find(|(k, _)| *k == "turn:lanes").map(|(_, v)| *v);
+                    let dest_lanes_tag = tags.iter().find(|(k, _)| *k == "destination:lanes").map(|(_, v)| *v);
+
+                    let metadata = RoadMetadata {
+                        way_id: way.id(),
+                        node_ids: way.refs().collect(),
+                        road_type,
+                        oneway: parse_oneway(oneway_tag, hw),
+                        speed_class: parse_speed_class(maxspeed, hw),
+                        lane_count: lanes_tag
+                            .and_then(|s| s.parse::<u8>().ok())
+                            .unwrap_or(0),
+                        turn_lanes: turn_lanes_tag.map(parse_turn_lanes),
+                        dest_lanes: dest_lanes_tag.map(parse_dest_lanes),
+                    };
+
                     // Add road to all tiles it passes through
-                    add_road_to_tiles(&mut tiles, &points, road_type);
+                    add_road_to_tiles(&mut tiles, &points, &metadata, node_coords);
                     return;
                 }
 
@@ -518,35 +628,93 @@ fn process_ways_and_relations(
     tiles
 }
 
-fn add_road_to_tiles(tiles: &mut HashMap<(i32, i32), Tile>, points: &[(f64, f64)], road_type: RoadType) {
-    // Process each segment (pair of consecutive points)
+fn add_road_to_tiles(
+    tiles: &mut HashMap<(i32, i32), Tile>,
+    points: &[(f64, f64)],
+    metadata: &RoadMetadata,
+    _node_coords: &HashMap<i64, (f64, f64)>,
+) {
+    // For proper routing, we need to store the road as a complete segment with
+    // start/end node IDs. However, the road may span multiple tiles.
+    // We'll store the complete road in each tile it touches, with the node IDs
+    // of the original way's start and end points.
+
+    if points.len() < 2 {
+        return;
+    }
+
+    // Get start and end node IDs from the way
+    let start_node = metadata.node_ids.first().copied().unwrap_or(0) as u64;
+    let end_node = metadata.node_ids.last().copied().unwrap_or(0) as u64;
+
+    // Find all tiles this road passes through
+    let mut all_tiles: HashSet<(i32, i32)> = HashSet::new();
     for window in points.windows(2) {
-        let (lat1, lon1) = window[0];
-        let (lat2, lon2) = window[1];
+        let tiles_touched = get_tiles_for_segment(window[0].0, window[0].1, window[1].0, window[1].1);
+        all_tiles.extend(tiles_touched);
+    }
 
-        // Find all tiles this segment passes through
-        let tiles_touched = get_tiles_for_segment(lat1, lon1, lat2, lon2);
+    // For each tile, clip the road and store it
+    for (tx, ty) in all_tiles {
+        let tile_min_lat = ty as f64 * TILE_SIZE_DEG;
+        let tile_max_lat = tile_min_lat + TILE_SIZE_DEG;
+        let tile_min_lon = tx as f64 * TILE_SIZE_DEG;
+        let tile_max_lon = tile_min_lon + TILE_SIZE_DEG;
 
-        for (tx, ty) in tiles_touched {
-            // Clip segment to tile bounds and convert to tile coordinates
-            let tile_min_lat = ty as f64 * TILE_SIZE_DEG;
-            let tile_max_lat = tile_min_lat + TILE_SIZE_DEG;
-            let tile_min_lon = tx as f64 * TILE_SIZE_DEG;
-            let tile_max_lon = tile_min_lon + TILE_SIZE_DEG;
+        // Collect all clipped segments for this tile
+        let mut tile_points: Vec<(i16, i16)> = Vec::new();
 
-            // Clip the segment to tile bounds
+        for window in points.windows(2) {
+            let (lat1, lon1) = window[0];
+            let (lat2, lon2) = window[1];
+
             if let Some((clipped_lat1, clipped_lon1, clipped_lat2, clipped_lon2)) =
                 clip_segment_to_tile(lat1, lon1, lat2, lon2, tile_min_lat, tile_max_lat, tile_min_lon, tile_max_lon)
             {
                 let (ox1, oy1) = lat_lon_to_tile_offset(clipped_lat1, clipped_lon1, tx, ty);
                 let (ox2, oy2) = lat_lon_to_tile_offset(clipped_lat2, clipped_lon2, tx, ty);
 
-                let tile = tiles.entry((tx, ty)).or_insert_with(|| Tile::new(tx, ty));
-                tile.roads.push(TileRoad {
-                    road_type,
-                    points: vec![(ox1, oy1), (ox2, oy2)],
-                });
+                // Add points, avoiding duplicates at segment junctions
+                if tile_points.is_empty() {
+                    tile_points.push((ox1, oy1));
+                } else if tile_points.last() != Some(&(ox1, oy1)) {
+                    // New segment doesn't connect to previous - store as separate road
+                    if tile_points.len() >= 2 {
+                        let tile = tiles.entry((tx, ty)).or_insert_with(|| Tile::new(tx, ty));
+                        tile.roads.push(TileRoad {
+                            road_type: metadata.road_type,
+                            points: std::mem::take(&mut tile_points),
+                            way_id: metadata.way_id as u64,
+                            start_node,
+                            end_node,
+                            oneway: metadata.oneway,
+                            speed_class: metadata.speed_class,
+                            lane_count: metadata.lane_count,
+                            turn_lanes: metadata.turn_lanes.clone(),
+                            dest_lanes: metadata.dest_lanes.clone(),
+                        });
+                    }
+                    tile_points.push((ox1, oy1));
+                }
+                tile_points.push((ox2, oy2));
             }
+        }
+
+        // Store any remaining points
+        if tile_points.len() >= 2 {
+            let tile = tiles.entry((tx, ty)).or_insert_with(|| Tile::new(tx, ty));
+            tile.roads.push(TileRoad {
+                road_type: metadata.road_type,
+                points: tile_points,
+                way_id: metadata.way_id as u64,
+                start_node,
+                end_node,
+                oneway: metadata.oneway,
+                speed_class: metadata.speed_class,
+                lane_count: metadata.lane_count,
+                turn_lanes: metadata.turn_lanes.clone(),
+                dest_lanes: metadata.dest_lanes.clone(),
+            });
         }
     }
 }

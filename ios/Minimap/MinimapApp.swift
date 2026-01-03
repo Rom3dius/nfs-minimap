@@ -1,7 +1,7 @@
 import SwiftUI
 import CoreLocation
 
-// Bridge to Rust library
+// Bridge to Rust library - Core functions
 @_silgen_name("minimap_init")
 func minimap_init(_ tile_dir: UnsafePointer<CChar>?) -> Bool
 
@@ -13,6 +13,35 @@ func minimap_set_gps_active(_ active: Bool)
 
 @_silgen_name("minimap_set_status")
 func minimap_set_status(_ text: UnsafePointer<CChar>?)
+
+// Bridge to Rust library - Navigation functions
+@_silgen_name("minimap_set_destination")
+func minimap_set_destination(_ lat: Double, _ lon: Double) -> Bool
+
+@_silgen_name("minimap_clear_route")
+func minimap_clear_route()
+
+@_silgen_name("minimap_has_lane_guidance")
+func minimap_has_lane_guidance() -> Bool
+
+@_silgen_name("minimap_get_junction_distance")
+func minimap_get_junction_distance() -> Float
+
+@_silgen_name("minimap_get_lane_guidance_json")
+func minimap_get_lane_guidance_json() -> UnsafeMutablePointer<CChar>?
+
+@_silgen_name("minimap_free_string")
+func minimap_free_string(_ s: UnsafeMutablePointer<CChar>?)
+
+// Helper to get lane guidance as Swift String
+func getLaneGuidanceJSON() -> String? {
+    guard let ptr = minimap_get_lane_guidance_json() else {
+        return nil
+    }
+    let json = String(cString: ptr)
+    minimap_free_string(ptr)
+    return json
+}
 
 // Global location manager - must be global so it persists and receives callbacks
 let globalLocationManager = LocationManager()

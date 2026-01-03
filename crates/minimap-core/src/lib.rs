@@ -214,6 +214,47 @@ pub struct ScreenSegment {
     pub road_type: i32,
 }
 
+/// Active navigation route
+#[derive(Debug, Clone, Default)]
+pub struct ActiveRoute {
+    /// Route waypoints as (lat, lon)
+    pub waypoints: Vec<(f64, f64)>,
+    /// Lane guidance for upcoming junction
+    pub lane_guidance: Option<LaneGuidanceInfo>,
+    /// Distance to next maneuver in meters
+    pub next_maneuver_distance: f32,
+    /// Type of next maneuver
+    pub next_maneuver_type: i32,
+}
+
+/// Lane guidance information for UI display
+#[derive(Debug, Clone)]
+pub struct LaneGuidanceInfo {
+    /// Total number of lanes
+    pub total_lanes: u8,
+    /// Per-lane info: (turn_type, is_recommended)
+    pub lanes: Vec<(i32, bool)>,
+    /// Recommended lane index
+    pub recommended_lane: u8,
+    /// Destination text (if available)
+    pub destination: Option<String>,
+    /// Distance to junction in meters
+    pub distance_m: f32,
+}
+
+impl LaneGuidanceInfo {
+    /// Convert to Slint-compatible LaneDisplay model
+    pub fn to_slint_lanes(&self) -> slint::ModelRc<LaneDisplay> {
+        let lanes: Vec<LaneDisplay> = self.lanes.iter()
+            .map(|(turn_type, is_recommended)| LaneDisplay {
+                turn_type: *turn_type,
+                is_recommended: *is_recommended,
+            })
+            .collect();
+        slint::ModelRc::new(slint::VecModel::from(lanes))
+    }
+}
+
 /// The main map renderer
 pub struct MapRenderer {
     config: MinimapConfig,
@@ -221,6 +262,8 @@ pub struct MapRenderer {
     pois: Vec<WorldPoi>,
     areas: Vec<WorldArea>,
     waterways: Vec<WorldWaterway>,
+    /// Active navigation route
+    route: Option<ActiveRoute>,
 }
 
 impl MapRenderer {
@@ -231,6 +274,7 @@ impl MapRenderer {
             pois: Vec::new(),
             areas: Vec::new(),
             waterways: Vec::new(),
+            route: None,
         }
     }
 
@@ -272,6 +316,111 @@ impl MapRenderer {
     /// Get a reference to the loaded waterways
     pub fn waterways(&self) -> &[WorldWaterway] {
         &self.waterways
+    }
+
+    /// Set the active navigation route
+    pub fn set_route(&mut self, route: Option<ActiveRoute>) {
+        self.route = route;
+    }
+
+    /// Set route from minimap-routing Route
+    pub fn set_route_from_routing(&mut self, route: &minimap_routing::Route) {
+        self.route = Some(ActiveRoute {
+            waypoints: route.waypoints.clone(),
+            lane_guidance: None,
+            next_maneuver_distance: 0.0,
+            next_maneuver_type: -1,
+        });
+    }
+
+    /// Clear the active route
+    pub fn clear_route(&mut self) {
+        self.route = None;
+    }
+
+    /// Get the active route
+    pub fn route(&self) -> Option<&ActiveRoute> {
+        self.route.as_ref()
+    }
+
+    /// Check if a route is active
+    pub fn has_route(&self) -> bool {
+        self.route.is_some()
+    }
+
+    /// Get lane guidance info if available
+    pub fn lane_guidance(&self) -> Option<&LaneGuidanceInfo> {
+        self.route.as_ref().and_then(|r| r.lane_guidance.as_ref())
+    }
+
+    /// Check if junction view should be visible
+    pub fn should_show_junction(&self) -> bool {
+        if let Some(route) = &self.route {
+            // Show junction when we have lane guidance or an upcoming maneuver within 500m
+            route.lane_guidance.is_some() ||
+            (route.next_maneuver_type >= 0 && route.next_maneuver_distance > 0.0 && route.next_maneuver_distance < 500.0)
+        } else {
+            false
+        }
+    }
+
+    /// Get junction distance in meters
+    pub fn junction_distance(&self) -> f32 {
+        if let Some(route) = &self.route {
+            if let Some(lg) = &route.lane_guidance {
+                return lg.distance_m;
+            }
+            if route.next_maneuver_distance > 0.0 {
+                return route.next_maneuver_distance;
+            }
+        }
+        0.0
+    }
+
+    /// Get junction destination text
+    pub fn junction_destination(&self) -> String {
+        if let Some(route) = &self.route {
+            if let Some(lg) = &route.lane_guidance {
+                return lg.destination.clone().unwrap_or_default();
+            }
+        }
+        String::new()
+    }
+
+    /// Get fallback turn type when no lane data available
+    pub fn junction_turn_type(&self) -> i32 {
+        if let Some(route) = &self.route {
+            if route.next_maneuver_type >= 0 {
+                return route.next_maneuver_type;
+            }
+        }
+        3 // Default to "through" (straight)
+    }
+
+    /// Update lane guidance from routing engine
+    pub fn update_lane_guidance(&mut self, guidance: Option<(minimap_routing::LaneGuidance, f32)>) {
+        if let Some(route) = &mut self.route {
+            route.lane_guidance = guidance.map(|(g, dist)| LaneGuidanceInfo {
+                total_lanes: g.total_lanes,
+                lanes: g.lanes.iter().map(|l| (l.turn as i32, l.is_recommended)).collect(),
+                recommended_lane: g.recommended_lane,
+                destination: g.destination,
+                distance_m: dist,
+            });
+        }
+    }
+
+    /// Update next maneuver info from routing engine
+    pub fn update_next_maneuver(&mut self, maneuver: Option<(minimap_routing::TurnType, f32)>) {
+        if let Some(route) = &mut self.route {
+            if let Some((turn, dist)) = maneuver {
+                route.next_maneuver_type = turn.to_int();
+                route.next_maneuver_distance = dist;
+            } else {
+                route.next_maneuver_type = -1;
+                route.next_maneuver_distance = 0.0;
+            }
+        }
     }
 
     /// Update configuration
@@ -529,6 +678,67 @@ impl MapRenderer {
         }
 
         triangles
+    }
+
+    /// Render the active route as highlighted road segments
+    /// Returns segments with RoadType::Highlight
+    pub fn render_route(&self, vehicle: &VehicleState) -> Vec<ScreenSegment> {
+        let mut segments = Vec::new();
+
+        let route = match &self.route {
+            Some(r) => r,
+            None => return segments,
+        };
+
+        if route.waypoints.len() < 2 {
+            return segments;
+        }
+
+        let center = Point2::new(
+            self.config.screen_width / 2.0,
+            self.config.screen_height / 2.0,
+        );
+
+        let transform = self.build_transform(vehicle);
+
+        // Render route waypoints as highlighted segments
+        for window in route.waypoints.windows(2) {
+            let (lat1, lon1) = window[0];
+            let (lat2, lon2) = window[1];
+
+            // Convert to local meters from vehicle position
+            let local1 = geo::lat_lon_to_local_meters(
+                lat1, lon1,
+                vehicle.latitude, vehicle.longitude,
+            );
+            let local2 = geo::lat_lon_to_local_meters(
+                lat2, lon2,
+                vehicle.latitude, vehicle.longitude,
+            );
+
+            // Apply transformation (scale, rotate)
+            let screen1 = transform_point(&transform, &local1, &center, self.config.meters_per_pixel);
+            let screen2 = transform_point(&transform, &local2, &center, self.config.meters_per_pixel);
+
+            // Clip to screen bounds (with margin)
+            let margin = 50.0;
+            if is_segment_visible(
+                &screen1, &screen2,
+                self.config.screen_width,
+                self.config.screen_height,
+                margin,
+            ) {
+                segments.push(ScreenSegment {
+                    x1: screen1.x,
+                    y1: screen1.y,
+                    x2: screen2.x,
+                    y2: screen2.y,
+                    road_type: RoadType::Highlight.to_int(),
+                });
+            }
+        }
+
+        segments
     }
 
     /// Build the rotation matrix based on heading

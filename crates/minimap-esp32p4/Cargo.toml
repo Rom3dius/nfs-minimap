@@ -13,6 +13,8 @@ path = "src/main.rs"
 
 [dependencies]
 minimap-core = { path = "../minimap-core" }
+minimap-tiles = { path = "../minimap-tiles", features = ["loader"] }
+minimap-routing = { path = "../minimap-routing" }
 
 # ESP-IDF framework bindings
 esp-idf-sys = { version = "0.35", features = ["binstart"] }
@@ -31,6 +33,9 @@ log.workspace = true
 
 # GPS NMEA parsing
 nmea.workspace = true
+
+# Error handling
+anyhow = "1.0"
 
 [build-dependencies]
 embuild = "0.32"

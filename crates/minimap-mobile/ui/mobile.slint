@@ -1,9 +1,9 @@
 // Mobile minimap UI - uses GPS for positioning
 // Uses shared components from minimap.slint with HUD enabled
 
-import { MinimapView, RoadSegment, PlayerState, MinimapColors, Poi, AreaTriangle, WaterwaySegment, ThemeManager } from "../../../ui/minimap.slint";
+import { MinimapView, RoadSegment, PlayerState, MinimapColors, Poi, AreaTriangle, WaterwaySegment, LaneDisplay, ThemeManager } from "../../../ui/minimap.slint";
 
-export { RoadSegment, PlayerState, Poi, AreaTriangle, WaterwaySegment }
+export { RoadSegment, PlayerState, Poi, AreaTriangle, WaterwaySegment, LaneDisplay }
 
 export component MobileApp inherits Window {
     title: "NFS Minimap";
@@ -16,6 +16,13 @@ export component MobileApp inherits Window {
     in property <PlayerState> player <=> map.player;
     in property <string> status-text: "Waiting for GPS...";
     in property <bool> gps-active: false;
+
+    // Junction view properties
+    in property <bool> junction-visible <=> map.junction-visible;
+    in property <[LaneDisplay]> junction-lanes <=> map.junction-lanes;
+    in property <string> junction-destination <=> map.junction-destination;
+    in property <float> junction-distance-m <=> map.junction-distance-m;
+    in property <int> junction-turn-type <=> map.junction-turn-type;
 
     // Zoom callbacks (forwarded to shared MinimapView)
     callback zoom-in <=> map.zoom-in;

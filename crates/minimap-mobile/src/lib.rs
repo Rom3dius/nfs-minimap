@@ -6,10 +6,32 @@
 //! For Android: Uses android-activity
 
 use minimap_core::{MapRenderer, MinimapConfig, VehicleState, WorldRoad, WorldPoi, WorldArea, WorldWaterway, RoadType, PoiType, AreaType, WaterwayType};
+use minimap_routing::{Router, RoutingConfig, VehiclePosition};
 use minimap_tiles::loader::TileLoader;
+use std::ffi::{c_char, CString};
 use std::sync::{Arc, Mutex, OnceLock};
 
 slint::include_modules!();
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/// Calculate haversine distance between two lat/lon points in meters
+fn haversine_distance_m(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f32 {
+    const EARTH_RADIUS_M: f64 = 6_371_000.0;
+
+    let lat1_rad = lat1.to_radians();
+    let lat2_rad = lat2.to_radians();
+    let dlat = (lat2 - lat1).to_radians();
+    let dlon = (lon2 - lon1).to_radians();
+
+    let a = (dlat / 2.0).sin().powi(2)
+        + lat1_rad.cos() * lat2_rad.cos() * (dlon / 2.0).sin().powi(2);
+    let c = 2.0 * a.sqrt().asin();
+
+    (EARTH_RADIUS_M * c) as f32
+}
 
 // ============================================================================
 // Shared App State
@@ -21,6 +43,7 @@ static APP: OnceLock<Arc<Mutex<App>>> = OnceLock::new();
 struct App {
     renderer: MapRenderer,
     tile_loader: Option<TileLoader>,
+    router: Router,
     vehicle: VehicleState,
     ui: slint::Weak<MobileApp>,
 }
@@ -49,11 +72,13 @@ impl App {
             }
         });
 
+        let router = Router::new(RoutingConfig::default());
         let ui = MobileApp::new()?;
 
         Ok((Self {
             renderer,
             tile_loader,
+            router,
             vehicle: VehicleState {
                 latitude: 47.1415,  // Rotkreuz, Switzerland
                 longitude: 8.4320,
@@ -160,14 +185,103 @@ impl App {
         self.refresh_ui();
     }
 
+    /// Set navigation destination and calculate route
+    fn set_destination(&mut self, lat: f64, lon: f64) -> bool {
+        let vehicle_pos = VehiclePosition {
+            lat: self.vehicle.latitude,
+            lon: self.vehicle.longitude,
+            heading: self.vehicle.heading,
+        };
+
+        log::info!("Setting navigation destination: ({:.6}, {:.6})", lat, lon);
+
+        if let Some(route) = self.router.calculate_route(vehicle_pos, (lat, lon)) {
+            log::info!(
+                "Route found: {} waypoints, {:.0}m total",
+                route.waypoints.len(),
+                route.total_distance_m
+            );
+            self.renderer.set_route_from_routing(route);
+            self.refresh_ui();
+            true
+        } else {
+            log::warn!("No route found to destination");
+            // Create a simple straight-line route for demo purposes
+            let simple_route = minimap_core::ActiveRoute {
+                waypoints: vec![
+                    (self.vehicle.latitude, self.vehicle.longitude),
+                    (lat, lon),
+                ],
+                lane_guidance: None,
+                next_maneuver_distance: haversine_distance_m(
+                    self.vehicle.latitude,
+                    self.vehicle.longitude,
+                    lat,
+                    lon,
+                ),
+                next_maneuver_type: 3, // straight
+            };
+            self.renderer.set_route(Some(simple_route));
+            self.refresh_ui();
+            true
+        }
+    }
+
+    /// Clear navigation route
+    fn clear_route(&mut self) {
+        log::info!("Clearing navigation route");
+        self.renderer.clear_route();
+        self.router.clear_route();
+        self.refresh_ui();
+    }
+
+    /// Check if lane guidance is available
+    fn has_lane_guidance(&self) -> bool {
+        self.renderer.lane_guidance().is_some()
+    }
+
+    /// Get distance to next junction
+    fn junction_distance(&self) -> f32 {
+        self.renderer.junction_distance()
+    }
+
+    /// Get lane guidance as JSON for native UI rendering
+    fn lane_guidance_json(&self) -> Option<String> {
+        let guidance = self.renderer.lane_guidance()?;
+        let lanes: Vec<serde_json::Value> = guidance
+            .lanes
+            .iter()
+            .map(|(turn_type, is_recommended)| {
+                serde_json::json!({
+                    "turn": *turn_type,
+                    "recommended": *is_recommended
+                })
+            })
+            .collect();
+
+        let json = serde_json::json!({
+            "lanes": lanes,
+            "destination": self.renderer.junction_destination(),
+            "distance_m": self.renderer.junction_distance(),
+            "turn_type": self.renderer.junction_turn_type()
+        });
+
+        Some(json.to_string())
+    }
+
     fn refresh_ui(&self) {
         if let Some(ui) = self.ui.upgrade() {
             let segments = self.renderer.render(&self.vehicle);
             let pois = self.renderer.render_pois(&self.vehicle);
             let area_triangles = self.renderer.render_area_triangles(&self.vehicle);
             let waterways = self.renderer.render_waterways(&self.vehicle);
+            let route_segments = self.renderer.render_route(&self.vehicle);
 
-            let road_model: Vec<RoadSegment> = segments
+            // Combine road segments with route overlay
+            let mut all_segments = segments;
+            all_segments.extend(route_segments);
+
+            let road_model: Vec<RoadSegment> = all_segments
                 .iter()
                 .map(|seg| RoadSegment {
                     x1: seg.x1,
@@ -221,6 +335,27 @@ impl App {
                 latitude: self.vehicle.latitude as f32,
                 longitude: self.vehicle.longitude as f32,
             });
+
+            // Update junction view properties
+            ui.set_junction_visible(self.renderer.should_show_junction());
+            ui.set_junction_distance_m(self.renderer.junction_distance());
+            ui.set_junction_destination(self.renderer.junction_destination().into());
+            ui.set_junction_turn_type(self.renderer.junction_turn_type());
+
+            // Update lane guidance if available
+            if let Some(guidance) = self.renderer.lane_guidance() {
+                let lanes: Vec<LaneDisplay> = guidance
+                    .lanes
+                    .iter()
+                    .map(|(turn_type, is_recommended)| LaneDisplay {
+                        turn_type: *turn_type,
+                        is_recommended: *is_recommended,
+                    })
+                    .collect();
+                ui.set_junction_lanes(slint::ModelRc::new(slint::VecModel::from(lanes)));
+            } else {
+                ui.set_junction_lanes(slint::ModelRc::new(slint::VecModel::from(Vec::<LaneDisplay>::new())));
+            }
         }
     }
 }
@@ -371,6 +506,108 @@ pub extern "C" fn minimap_set_status(text: *const std::ffi::c_char) {
                 }
             }
         }
+    }
+}
+
+// ============================================================================
+// Navigation FFI Interface
+// ============================================================================
+
+/// Set navigation destination and calculate route
+///
+/// # Arguments
+/// * `lat` - Destination latitude
+/// * `lon` - Destination longitude
+///
+/// # Returns
+/// * `true` if route was found or fallback created, `false` on error
+#[no_mangle]
+pub extern "C" fn minimap_set_destination(lat: f64, lon: f64) -> bool {
+    if let Some(app) = APP.get() {
+        if let Ok(mut app) = app.lock() {
+            return app.set_destination(lat, lon);
+        }
+    }
+    false
+}
+
+/// Clear the current navigation route
+#[no_mangle]
+pub extern "C" fn minimap_clear_route() {
+    if let Some(app) = APP.get() {
+        if let Ok(mut app) = app.lock() {
+            app.clear_route();
+        }
+    }
+}
+
+/// Check if lane guidance is available for the current route
+///
+/// # Returns
+/// * `true` if lane guidance is available
+#[no_mangle]
+pub extern "C" fn minimap_has_lane_guidance() -> bool {
+    if let Some(app) = APP.get() {
+        if let Ok(app) = app.lock() {
+            return app.has_lane_guidance();
+        }
+    }
+    false
+}
+
+/// Get the distance to the next junction in meters
+///
+/// # Returns
+/// * Distance in meters, or 0.0 if no junction is upcoming
+#[no_mangle]
+pub extern "C" fn minimap_get_junction_distance() -> f32 {
+    if let Some(app) = APP.get() {
+        if let Ok(app) = app.lock() {
+            return app.junction_distance();
+        }
+    }
+    0.0
+}
+
+/// Get lane guidance as JSON string
+///
+/// Returns a JSON object with the following structure:
+/// ```json
+/// {
+///   "lanes": [{"turn": 3, "recommended": true}, ...],
+///   "destination": "City Center",
+///   "distance_m": 300.0,
+///   "turn_type": 5
+/// }
+/// ```
+///
+/// Turn types: 0=none, 1=left, 2=slight-left, 3=through, 4=slight-right, 5=right, 6=uturn
+///
+/// # Returns
+/// * Pointer to a C string that must be freed with `minimap_free_string()`, or null if no guidance
+#[no_mangle]
+pub extern "C" fn minimap_get_lane_guidance_json() -> *mut c_char {
+    if let Some(app) = APP.get() {
+        if let Ok(app) = app.lock() {
+            if let Some(json) = app.lane_guidance_json() {
+                if let Ok(c_string) = CString::new(json) {
+                    return c_string.into_raw();
+                }
+            }
+        }
+    }
+    std::ptr::null_mut()
+}
+
+/// Free a string returned by `minimap_get_lane_guidance_json()`
+///
+/// # Safety
+/// The pointer must be a valid pointer returned by `minimap_get_lane_guidance_json()`
+/// or null (which is safely ignored).
+#[no_mangle]
+pub unsafe extern "C" fn minimap_free_string(s: *mut c_char) {
+    if !s.is_null() {
+        let _ = CString::from_raw(s);
     }
 }
 

@@ -11,6 +11,7 @@ nalgebra.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 reqwest = { version = "0.12", features = ["blocking", "json"] }
+minimap-routing = { path = "../minimap-routing" }
 
 [build-dependencies]
 slint-build = "1.9"

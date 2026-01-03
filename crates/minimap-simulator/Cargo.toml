@@ -8,8 +8,14 @@ license.workspace = true
 name = "simulator"
 path = "src/main.rs"
 
+[features]
+default = []
+# Enable turn-by-turn navigation (experimental, not fully working)
+navigation = ["minimap-routing"]
+
 [dependencies]
 minimap-core = { path = "../minimap-core" }
+minimap-routing = { path = "../minimap-routing", optional = true }
 minimap-tiles = { path = "../minimap-tiles", features = ["loader"] }
 slint = { workspace = true, features = ["backend-winit"] }
 log.workspace = true

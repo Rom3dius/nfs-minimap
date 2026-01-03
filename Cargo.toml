@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/minimap-core",
+    "crates/minimap-routing",
     "crates/minimap-simulator",
     "crates/minimap-tiles",
     "crates/minimap-mobile",

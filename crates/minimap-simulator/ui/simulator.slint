@@ -1,9 +1,9 @@
 // Simulator wrapper - adds keyboard controls for desktop testing
 // Uses shared components from minimap.slint with theming and settings
 
-import { MinimapView, RoadSegment, PlayerState, MinimapColors, Poi, AreaTriangle, WaterwaySegment, ThemeManager } from "../../../ui/minimap.slint";
+import { MinimapView, RoadSegment, PlayerState, MinimapColors, Poi, AreaTriangle, WaterwaySegment, LaneDisplay, ThemeManager } from "../../../ui/minimap.slint";
 
-export { RoadSegment, PlayerState, Poi, AreaTriangle, WaterwaySegment }
+export { RoadSegment, PlayerState, Poi, AreaTriangle, WaterwaySegment, LaneDisplay }
 
 export component SimulatorWindow inherits Window {
     in property <[RoadSegment]> roads <=> map.roads;
@@ -12,9 +12,24 @@ export component SimulatorWindow inherits Window {
     in property <[WaterwaySegment]> waterways <=> map.waterways;
     in property <PlayerState> player <=> map.player;
 
+    // Navigation / Junction guidance properties
+    in property <bool> junction-visible <=> map.junction-visible;
+    in property <[LaneDisplay]> junction-lanes <=> map.junction-lanes;
+    in property <string> junction-destination <=> map.junction-destination;
+    in property <float> junction-distance-m <=> map.junction-distance-m;
+    in property <int> junction-turn-type <=> map.junction-turn-type;
+
+    // Navigation status display
+    in property <bool> navigating: false;
+    in property <string> nav-destination-name: "";
+    in property <float> nav-distance-remaining: 0;
+
     // Keyboard callbacks for movement
     callback key-pressed(string);
     callback key-released(string);
+
+    // Click-to-navigate callback (screen x, y coordinates)
+    callback map-clicked(float, float);
 
     // Zoom callbacks (forwarded to shared MinimapView)
     callback zoom-in <=> map.zoom-in;
@@ -28,10 +43,83 @@ export component SimulatorWindow inherits Window {
     // Forward focus to the keyboard handler
     forward-focus: keyboard-handler;
 
-    // Map view
+    // Map view with click handler
     map := MinimapView {
         width: 100%;
         height: 100%;
+    }
+
+    // Click area for navigation (overlays map)
+    TouchArea {
+        x: 0;
+        y: 0;
+        width: 100%;
+        height: 100%;
+
+        clicked => {
+            map-clicked(self.mouse-x / 1px, self.mouse-y / 1px);
+        }
+    }
+
+    // Navigation status overlay (top-left)
+    Rectangle {
+        x: 10px;
+        y: 10px;
+        width: nav-info.preferred-width + 20px;
+        height: nav-info.preferred-height + 16px;
+        background: ThemeManager.colors.bg.with-alpha(0.85);
+        border-radius: 8px;
+        visible: navigating;
+
+        nav-info := VerticalLayout {
+            padding: 8px;
+            spacing: 4px;
+
+            Text {
+                text: "Navigating to:";
+                color: ThemeManager.colors.road-secondary;
+                font-size: 11px;
+            }
+            Text {
+                text: nav-destination-name;
+                color: ThemeManager.colors.road-primary;
+                font-size: 14px;
+                font-weight: 600;
+            }
+            Text {
+                text: nav-distance-remaining < 1000 ?
+                    "\{round(nav-distance-remaining)}m remaining" :
+                    "\{round(nav-distance-remaining / 100) / 10}km remaining";
+                color: ThemeManager.colors.road-secondary;
+                font-size: 12px;
+            }
+        }
+    }
+
+    // Help overlay (bottom-left)
+    Rectangle {
+        x: 10px;
+        y: parent.height - self.height - 10px;
+        width: help-text.preferred-width + 20px;
+        height: help-text.preferred-height + 16px;
+        background: ThemeManager.colors.bg.with-alpha(0.85);
+        border-radius: 8px;
+
+        help-text := VerticalLayout {
+            padding: 8px;
+            spacing: 2px;
+
+            Text {
+                text: "WASD: Move | Q/E: Zoom | Click: Navigate";
+                color: ThemeManager.colors.road-secondary;
+                font-size: 10px;
+            }
+            Text {
+                text: "1-4: Destinations | C: Clear | T: Theme";
+                color: ThemeManager.colors.road-secondary;
+                font-size: 10px;
+            }
+        }
     }
 
     // Keyboard handler (initially focused via forward-focus)

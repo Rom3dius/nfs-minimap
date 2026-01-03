@@ -1,0 +1,19 @@
+[package]
+name = "minimap-routing"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+description = "Routing engine for NFS-style minimap"
+
+[features]
+default = ["std"]
+std = []
+# no_std mode uses heapless collections with bounded sizes for ESP32
+
+[dependencies]
+minimap-tiles = { path = "../minimap-tiles" }
+heapless = "0.8"
+log = "0.4"
+
+[dev-dependencies]
+bincode = "1.3"

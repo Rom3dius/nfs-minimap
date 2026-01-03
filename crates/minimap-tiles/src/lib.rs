@@ -9,6 +9,7 @@
 
 extern crate alloc;
 
+use alloc::string::String;
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
@@ -22,7 +23,7 @@ pub const COORD_SCALE: f64 = 3000.0;
 pub const TILE_MAGIC: [u8; 4] = *b"MMAP";
 
 /// Current tile format version
-pub const TILE_VERSION: u8 = 3;
+pub const TILE_VERSION: u8 = 4;
 
 /// Road types (matches minimap-core)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,12 +62,55 @@ pub enum WaterwayType {
     Canal = 2,      // Canals
 }
 
+/// Lane turn directions for navigation (from OSM turn:lanes tag)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum LaneTurn {
+    None = 0,           // No turn marking or unknown
+    Left = 1,           // Left turn
+    SlightLeft = 2,     // Slight left
+    Through = 3,        // Straight/through
+    SlightRight = 4,    // Slight right
+    Right = 5,          // Right turn
+    UTurn = 6,          // U-turn
+    MergeLeft = 7,      // Merge to left
+    MergeRight = 8,     // Merge to right
+}
+
 /// A road stored in a tile (coordinates relative to tile origin)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TileRoad {
     pub road_type: RoadType,
     /// Points as (x, y) offsets from tile origin, scaled by COORD_SCALE
     pub points: Vec<(i16, i16)>,
+
+    // Routing metadata (v4+)
+    /// OSM way ID for segment reconnection across tiles
+    #[serde(default)]
+    pub way_id: u64,
+    /// OSM node ID at first point (for graph connectivity)
+    #[serde(default)]
+    pub start_node: u64,
+    /// OSM node ID at last point (for graph connectivity)
+    #[serde(default)]
+    pub end_node: u64,
+    /// Direction: -1=reverse only, 0=both directions, 1=forward only
+    #[serde(default)]
+    pub oneway: i8,
+    /// Speed class: 0=unknown, 1=slow(<30km/h), 2=urban(30-50), 3=fast(50-80), 4=highway(>80)
+    #[serde(default)]
+    pub speed_class: u8,
+
+    // Lane guidance metadata (v4+)
+    /// Number of lanes (0=unknown)
+    #[serde(default)]
+    pub lane_count: u8,
+    /// Per-lane turn directions (from OSM turn:lanes tag)
+    #[serde(default)]
+    pub turn_lanes: Option<Vec<LaneTurn>>,
+    /// Per-lane destination signs (from OSM destination:lanes tag)
+    #[serde(default)]
+    pub dest_lanes: Option<Vec<String>>,
 }
 
 /// A POI stored in a tile
@@ -147,6 +191,7 @@ impl Tile {
     }
 
     /// Deserialize tile from bytes
+    /// Supports v3 (legacy) and v4 (with routing/lane data) formats
     pub fn from_bytes(data: &[u8]) -> Result<Self, &'static str> {
         if data.len() < 5 {
             return Err("data too short");
@@ -154,11 +199,20 @@ impl Tile {
         if &data[0..4] != &TILE_MAGIC {
             return Err("invalid magic bytes");
         }
-        if data[4] != TILE_VERSION {
-            return Err("unsupported version");
-        }
 
-        bincode::deserialize(&data[5..]).map_err(|_| "deserialization failed")
+        let version = data[4];
+        match version {
+            3 => {
+                // v3 tiles are no longer supported - regenerate with tile-processor
+                // bincode doesn't support schema evolution, so we can't add new fields
+                Err("v3 tiles not supported - please regenerate tiles with tile-processor")
+            }
+            4 => {
+                // v4 tiles: full routing and lane data
+                bincode::deserialize(&data[5..]).map_err(|_| "deserialization failed (v4)")
+            }
+            _ => Err("unsupported version"),
+        }
     }
 }
 
@@ -363,12 +417,18 @@ pub mod loader {
         pub fn loaded_count(&self) -> usize {
             self.loaded_tiles.len()
         }
+
+        /// Get reference to loaded tiles for routing
+        pub fn get_tiles(&self) -> Vec<&Tile> {
+            self.loaded_tiles.values().collect()
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn test_tile_coords() {
@@ -396,6 +456,14 @@ mod tests {
         tile.roads.push(TileRoad {
             road_type: RoadType::Primary,
             points: vec![(100, 200), (300, 400)],
+            way_id: 12345678,
+            start_node: 1001,
+            end_node: 1002,
+            oneway: 1,
+            speed_class: 3,
+            lane_count: 2,
+            turn_lanes: Some(vec![LaneTurn::Through, LaneTurn::Right]),
+            dest_lanes: Some(vec!["City A".into(), "City B".into()]),
         });
         tile.pois.push(TilePoi {
             poi_type: PoiType::GasStation,
@@ -409,5 +477,42 @@ mod tests {
         assert_eq!(tile.tile_x, tile2.tile_x);
         assert_eq!(tile.roads.len(), tile2.roads.len());
         assert_eq!(tile.pois.len(), tile2.pois.len());
+
+        // Verify routing metadata
+        let road = &tile2.roads[0];
+        assert_eq!(road.way_id, 12345678);
+        assert_eq!(road.start_node, 1001);
+        assert_eq!(road.end_node, 1002);
+        assert_eq!(road.oneway, 1);
+        assert_eq!(road.speed_class, 3);
+        assert_eq!(road.lane_count, 2);
+        assert_eq!(road.turn_lanes, Some(vec![LaneTurn::Through, LaneTurn::Right]));
+        assert_eq!(road.dest_lanes, Some(vec!["City A".into(), "City B".into()]));
+    }
+
+    #[test]
+    fn test_tile_road_defaults() {
+        // Test that roads with default values serialize/deserialize correctly
+        let mut tile = Tile::new(100, 200);
+        tile.roads.push(TileRoad {
+            road_type: RoadType::Secondary,
+            points: vec![(0, 0), (100, 100)],
+            way_id: 0,
+            start_node: 0,
+            end_node: 0,
+            oneway: 0,
+            speed_class: 0,
+            lane_count: 0,
+            turn_lanes: None,
+            dest_lanes: None,
+        });
+
+        let bytes = tile.to_bytes().unwrap();
+        let tile2 = Tile::from_bytes(&bytes).unwrap();
+
+        let road = &tile2.roads[0];
+        assert_eq!(road.way_id, 0);
+        assert_eq!(road.turn_lanes, None);
+        assert_eq!(road.dest_lanes, None);
     }
 }
