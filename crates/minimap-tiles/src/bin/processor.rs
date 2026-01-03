@@ -183,9 +183,11 @@ fn collect_needed_nodes(path: &str, relation_ways: &HashSet<i64>) -> HashSet<i64
                 let is_parking = tags.iter().any(|(k, v)| *k == "amenity" && *v == "parking")
                     && tags
                         .iter()
-                        .any(|(k, v)| *k == "parking" && (*v == "multi-storey" || *v == "underground"));
+                        .any(|(k, v)| *k == "parking" && (*v == "multi-storey" || *v == "underground"))
+                    && !tags.iter().any(|(k, _)| *k == "bicycle");  // Exclude bicycle parking
                 let is_mall = tags.iter().any(|(k, v)| *k == "shop" && *v == "mall");
                 let is_car_wash = tags.iter().any(|(k, v)| *k == "amenity" && *v == "car_wash");
+                let is_fast_food = tags.iter().any(|(k, v)| *k == "amenity" && *v == "fast_food");
 
                 // Check if it's an area we want (water, forest, park)
                 let is_water = tags.iter().any(|(k, v)| {
@@ -211,7 +213,7 @@ fn collect_needed_nodes(path: &str, relation_ways: &HashSet<i64>) -> HashSet<i64
                 // Also check if this way is part of a water relation
                 let is_relation_member = relation_ways.contains(&way.id());
 
-                if is_road || is_fuel || is_parking || is_mall || is_car_wash
+                if is_road || is_fuel || is_parking || is_mall || is_car_wash || is_fast_food
                     || is_water || is_forest || is_park || is_grass || is_waterway || is_relation_member
                 {
                     for node_id in way.refs() {
@@ -379,19 +381,26 @@ fn process_ways_and_relations(
                 // Check if it's a POI
                 let amenity = tags.iter().find(|(k, _)| *k == "amenity").map(|(_, v)| *v);
                 let shop = tags.iter().find(|(k, _)| *k == "shop").map(|(_, v)| *v);
+                let has_bicycle_tag = tags.iter().any(|(k, _)| *k == "bicycle");
 
                 let poi_type = match amenity {
                     Some("fuel") => Some(PoiType::GasStation),
                     Some("car_wash") => Some(PoiType::CarWash),
+                    Some("fast_food") => Some(PoiType::FastFood),
                     Some("parking") => {
-                        let parking_type =
-                            tags.iter().find(|(k, _)| *k == "parking").map(|(_, v)| *v);
-                        if parking_type == Some("multi-storey")
-                            || parking_type == Some("underground")
-                        {
-                            Some(PoiType::Parking)
-                        } else {
+                        // Exclude bicycle parking
+                        if has_bicycle_tag {
                             None
+                        } else {
+                            let parking_type =
+                                tags.iter().find(|(k, _)| *k == "parking").map(|(_, v)| *v);
+                            if parking_type == Some("multi-storey")
+                                || parking_type == Some("underground")
+                            {
+                                Some(PoiType::Parking)
+                            } else {
+                                None
+                            }
                         }
                     }
                     _ => None,
@@ -429,10 +438,28 @@ fn process_ways_and_relations(
 
             let amenity = tags.iter().find(|(k, _)| *k == "amenity").map(|(_, v)| *v);
             let shop = tags.iter().find(|(k, _)| *k == "shop").map(|(_, v)| *v);
+            let has_bicycle_tag = tags.iter().any(|(k, _)| *k == "bicycle");
 
             let poi_type = match amenity {
                 Some("fuel") => Some(PoiType::GasStation),
                 Some("car_wash") => Some(PoiType::CarWash),
+                Some("fast_food") => Some(PoiType::FastFood),
+                Some("parking") => {
+                    // Exclude bicycle parking
+                    if has_bicycle_tag {
+                        None
+                    } else {
+                        let parking_type =
+                            tags.iter().find(|(k, _)| *k == "parking").map(|(_, v)| *v);
+                        if parking_type == Some("multi-storey")
+                            || parking_type == Some("underground")
+                        {
+                            Some(PoiType::Parking)
+                        } else {
+                            None
+                        }
+                    }
+                }
                 _ => None,
             }.or_else(|| match shop {
                 Some("mall") => Some(PoiType::ShoppingMall),

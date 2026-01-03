@@ -99,6 +99,7 @@ impl App {
                         minimap_tiles::PoiType::Parking => PoiType::Parking,
                         minimap_tiles::PoiType::ShoppingMall => PoiType::ShoppingMall,
                         minimap_tiles::PoiType::CarWash => PoiType::CarWash,
+                        minimap_tiles::PoiType::FastFood => PoiType::FastFood,
                     },
                 })
                 .collect();

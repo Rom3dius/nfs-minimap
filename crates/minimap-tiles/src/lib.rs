@@ -22,7 +22,7 @@ pub const COORD_SCALE: f64 = 3000.0;
 pub const TILE_MAGIC: [u8; 4] = *b"MMAP";
 
 /// Current tile format version
-pub const TILE_VERSION: u8 = 3;
+pub const TILE_VERSION: u8 = 4;
 
 /// Road types (matches minimap-core)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,6 +40,7 @@ pub enum PoiType {
     Parking = 1,
     ShoppingMall = 2,
     CarWash = 3,
+    FastFood = 4,
 }
 
 /// Area types for natural features

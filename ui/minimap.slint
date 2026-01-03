@@ -15,7 +15,7 @@ export struct RoadSegment {
 export struct Poi {
     x: float,
     y: float,
-    poi-type: int,  // 0 = gas station, 1 = parking, 2 = shopping mall, 3 = car wash
+    poi-type: int,  // 0 = gas station, 1 = parking, 2 = shopping mall, 3 = car wash, 4 = fast food
 }
 
 export struct WaterwaySegment {
@@ -58,6 +58,7 @@ export struct ThemeColors {
     poi-parking: color,
     poi-mall: color,
     poi-carwash: color,
+    poi-fastfood: color,
     area-water: color,
     area-forest: color,
     area-park: color,
@@ -90,6 +91,7 @@ export global ThemeManager {
         poi-parking: #3498db,
         poi-mall: #9b59b6,
         poi-carwash: #1abc9c,
+        poi-fastfood: #f39c12,
         area-water: #1e2a38,
         area-forest: #1a2620,
         area-park: #1e2a22,
@@ -111,6 +113,7 @@ export global ThemeManager {
         poi-parking: #ff8fab,
         poi-mall: #c77dff,
         poi-carwash: #72efdd,
+        poi-fastfood: #ffaa00,
         area-water: #b8e0ff,
         area-forest: #98d8aa,
         area-park: #c8e6c9,
@@ -132,6 +135,7 @@ export global ThemeManager {
         poi-parking: #42a5f5,
         poi-mall: #ab47bc,
         poi-carwash: #26c6da,
+        poi-fastfood: #ffa726,
         area-water: #1a3a4a,
         area-forest: #1b4332,
         area-park: #2d5a3d,
@@ -153,6 +157,7 @@ export global ThemeManager {
         poi-parking: #8caaee,
         poi-mall: #ca9ee6,
         poi-carwash: #81c8be,
+        poi-fastfood: #ef9f76,
         area-water: #292c3c,
         area-forest: #2a3830,
         area-park: #303840,
@@ -174,6 +179,7 @@ export global ThemeManager {
         poi-parking: #89b4fa,
         poi-mall: #cba6f7,
         poi-carwash: #94e2d5,
+        poi-fastfood: #fab387,
         area-water: #181825,
         area-forest: #1a2520,
         area-park: #1e2830,
@@ -195,6 +201,7 @@ export global ThemeManager {
         poi-parking: #d4af37,
         poi-mall: #c9a227,
         poi-carwash: #b8860b,
+        poi-fastfood: #e6a800,
         area-water: #0d1520,
         area-forest: #101510,
         area-park: #151a10,
@@ -222,6 +229,7 @@ export global MinimapColors {
     out property <color> poi-parking: ThemeManager.colors.poi-parking;
     out property <color> poi-mall: ThemeManager.colors.poi-mall;
     out property <color> poi-carwash: ThemeManager.colors.poi-carwash;
+    out property <color> poi-fastfood: ThemeManager.colors.poi-fastfood;
     out property <color> area-water: ThemeManager.colors.area-water;
     out property <color> area-forest: ThemeManager.colors.area-forest;
     out property <color> area-park: ThemeManager.colors.area-park;
@@ -579,7 +587,7 @@ component LegendPanel inherits Rectangle {
 
             // Scrollable content
             Flickable {
-                viewport-height: 520px;
+                viewport-height: 550px;
 
                 VerticalLayout {
                     spacing: 16px;
@@ -693,6 +701,11 @@ component LegendPanel inherits Rectangle {
                         LegendItem {
                             item-color: ThemeManager.colors.poi-carwash;
                             label: "Car Wash";
+                            is-poi: true;
+                        }
+                        LegendItem {
+                            item-color: ThemeManager.colors.poi-fastfood;
+                            label: "Fast Food";
                             is-poi: true;
                         }
                     }
@@ -991,7 +1004,8 @@ export component MinimapView inherits Rectangle {
                     background: poi.poi-type == 0 ? ThemeManager.colors.poi-gas :
                                 poi.poi-type == 1 ? ThemeManager.colors.poi-parking :
                                 poi.poi-type == 2 ? ThemeManager.colors.poi-mall :
-                                ThemeManager.colors.poi-carwash;
+                                poi.poi-type == 3 ? ThemeManager.colors.poi-carwash :
+                                ThemeManager.colors.poi-fastfood;
                     border-width: 2px;
                     border-color: #fff;
                 }

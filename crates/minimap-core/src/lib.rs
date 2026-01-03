@@ -76,6 +76,7 @@ pub enum PoiType {
     Parking,
     ShoppingMall,
     CarWash,
+    FastFood,
 }
 
 impl PoiType {
@@ -85,6 +86,7 @@ impl PoiType {
             PoiType::Parking => 1,
             PoiType::ShoppingMall => 2,
             PoiType::CarWash => 3,
+            PoiType::FastFood => 4,
         }
     }
 }
