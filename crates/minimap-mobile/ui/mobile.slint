@@ -1,5 +1,5 @@
 // Mobile minimap UI - uses GPS for positioning
-// Uses shared components from minimap.slint with HUD enabled
+// Uses shared MinimapView component with GPS status ring
 
 import { MinimapView, RoadSegment, PlayerState, MinimapColors, Poi, AreaTriangle, WaterwaySegment, ThemeManager } from "../../../ui/minimap.slint";
 
@@ -14,8 +14,9 @@ export component MobileApp inherits Window {
     in property <[AreaTriangle]> areas <=> map.areas;
     in property <[WaterwaySegment]> waterways <=> map.waterways;
     in property <PlayerState> player <=> map.player;
-    in property <string> status-text: "Waiting for GPS...";
-    in property <bool> gps-active: false;
+
+    // GPS status: 0 = no signal (red ring), 1 = inaccurate (yellow ring), 2 = good (no ring)
+    in property <int> gps-status <=> map.gps-status;
 
     // Zoom callbacks (forwarded to shared MinimapView)
     callback zoom-in <=> map.zoom-in;
@@ -23,12 +24,9 @@ export component MobileApp inherits Window {
 
     background: ThemeManager.colors.bg;
 
-    // Use shared MinimapView with HUD enabled for mobile
+    // Use shared MinimapView
     map := MinimapView {
         width: 100%;
         height: 100%;
-        show-hud: true;
-        gps-active: root.gps-active;
-        status-text: root.status-text;
     }
 }

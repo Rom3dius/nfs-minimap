@@ -12,6 +12,9 @@ export component SimulatorWindow inherits Window {
     in property <[WaterwaySegment]> waterways <=> map.waterways;
     in property <PlayerState> player <=> map.player;
 
+    // GPS status: 0 = no signal, 1 = inaccurate, 2 = good (default to good for simulator)
+    in property <int> gps-status <=> map.gps-status;
+
     // Keyboard callbacks for movement
     callback key-pressed(string);
     callback key-released(string);

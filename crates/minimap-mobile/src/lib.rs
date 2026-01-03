@@ -6,6 +6,7 @@
 //! For Android: Uses android-activity
 
 use minimap_core::{MapRenderer, MinimapConfig, VehicleState, WorldRoad, WorldPoi, WorldArea, WorldWaterway, RoadType, PoiType, AreaType, WaterwayType};
+use minimap_core::transform::smooth_angle;
 use minimap_tiles::loader::TileLoader;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -15,13 +16,35 @@ slint::include_modules!();
 // Shared App State
 // ============================================================================
 
+/// Interpolation smoothing factor (0.0 = no movement, 1.0 = instant snap)
+/// Lower values = smoother but more lag, higher = snappier but less smooth
+const POSITION_SMOOTHING: f64 = 0.15;
+const HEADING_SMOOTHING: f32 = 0.2;
+
+/// GPS accuracy threshold in meters for "good" signal
+const GPS_ACCURACY_GOOD: f64 = 20.0;
+/// GPS accuracy threshold in meters for "inaccurate" (above this = no signal)
+const GPS_ACCURACY_POOR: f64 = 100.0;
+
+/// GPS status values (matches Slint UI)
+pub const GPS_STATUS_NONE: i32 = 0;        // No GPS signal (red ring)
+pub const GPS_STATUS_INACCURATE: i32 = 1;  // Inaccurate GPS (yellow ring)
+pub const GPS_STATUS_GOOD: i32 = 2;        // Good GPS signal (no ring)
+
 /// Global app state
 static APP: OnceLock<Arc<Mutex<App>>> = OnceLock::new();
 
 struct App {
     renderer: MapRenderer,
     tile_loader: Option<TileLoader>,
+    /// Currently displayed vehicle state (smoothly interpolated)
     vehicle: VehicleState,
+    /// Target vehicle state from GPS (where we're interpolating toward)
+    target: VehicleState,
+    /// Whether we've received at least one GPS update
+    has_gps_fix: bool,
+    /// Current GPS status (0 = none, 1 = inaccurate, 2 = good)
+    gps_status: i32,
     ui: slint::Weak<MobileApp>,
 }
 
@@ -51,24 +74,39 @@ impl App {
 
         let ui = MobileApp::new()?;
 
+        let initial_state = VehicleState {
+            latitude: 47.1415,  // Rotkreuz, Switzerland
+            longitude: 8.4320,
+            heading: 0.0,
+            speed_kmh: 0.0,
+        };
+
         Ok((Self {
             renderer,
             tile_loader,
-            vehicle: VehicleState {
-                latitude: 47.1415,  // Rotkreuz, Switzerland
-                longitude: 8.4320,
-                heading: 0.0,
-                speed_kmh: 0.0,
-            },
+            vehicle: initial_state.clone(),
+            target: initial_state,
+            has_gps_fix: false,
+            gps_status: GPS_STATUS_NONE,
             ui: ui.as_weak(),
         }, ui))
     }
 
     fn update_position(&mut self, lat: f64, lon: f64, heading: f32, speed: f32) {
-        self.vehicle.latitude = lat;
-        self.vehicle.longitude = lon;
-        self.vehicle.heading = heading;
-        self.vehicle.speed_kmh = speed;
+        // On first GPS fix, snap directly to position (no interpolation)
+        if !self.has_gps_fix {
+            self.vehicle.latitude = lat;
+            self.vehicle.longitude = lon;
+            self.vehicle.heading = heading;
+            self.vehicle.speed_kmh = speed;
+            self.has_gps_fix = true;
+        }
+
+        // Set target position for interpolation
+        self.target.latitude = lat;
+        self.target.longitude = lon;
+        self.target.heading = heading;
+        self.target.speed_kmh = speed;
 
         // Load tiles for new position
         if let Some(ref mut loader) = self.tile_loader {
@@ -140,15 +178,54 @@ impl App {
         self.refresh_ui();
     }
 
-    fn set_gps_active(&self, active: bool) {
-        if let Some(ui) = self.ui.upgrade() {
-            ui.set_gps_active(active);
-            ui.set_status_text(if active {
-                "GPS Active".into()
-            } else {
-                "Waiting for GPS...".into()
-            });
+    /// Set GPS status based on accuracy in meters
+    /// accuracy < 0 means no GPS signal
+    fn set_gps_status_from_accuracy(&mut self, accuracy_meters: f64) {
+        let new_status = if accuracy_meters < 0.0 {
+            GPS_STATUS_NONE
+        } else if accuracy_meters <= GPS_ACCURACY_GOOD {
+            GPS_STATUS_GOOD
+        } else if accuracy_meters <= GPS_ACCURACY_POOR {
+            GPS_STATUS_INACCURATE
+        } else {
+            GPS_STATUS_NONE  // Very poor accuracy treated as no signal
+        };
+
+        if new_status != self.gps_status {
+            self.gps_status = new_status;
+            if let Some(ui) = self.ui.upgrade() {
+                ui.set_gps_status(new_status);
+            }
         }
+    }
+
+    /// Set GPS status directly (0 = none, 1 = inaccurate, 2 = good)
+    fn set_gps_status(&mut self, status: i32) {
+        if status != self.gps_status {
+            self.gps_status = status;
+            if let Some(ui) = self.ui.upgrade() {
+                ui.set_gps_status(status);
+            }
+        }
+    }
+
+    /// Interpolation tick - called at ~60Hz to smoothly animate position
+    fn interpolation_tick(&mut self) {
+        if !self.has_gps_fix {
+            return;
+        }
+
+        // Smoothly interpolate position toward target
+        self.vehicle.latitude += (self.target.latitude - self.vehicle.latitude) * POSITION_SMOOTHING;
+        self.vehicle.longitude += (self.target.longitude - self.vehicle.longitude) * POSITION_SMOOTHING;
+
+        // Smoothly interpolate heading (with wrap-around handling)
+        self.vehicle.heading = smooth_angle(self.vehicle.heading, self.target.heading, HEADING_SMOOTHING);
+
+        // Speed doesn't need interpolation - use target directly
+        self.vehicle.speed_kmh = self.target.speed_kmh;
+
+        self.refresh_ui();
     }
 
     fn zoom_in(&mut self) {
@@ -240,14 +317,7 @@ mod ios {
     /// should call minimap_update_gps() when location updates arrive.
     pub fn start_location_updates() {
         log::info!("iOS GPS: Use native code to call minimap_update_gps()");
-
-        if let Some(app) = APP.get() {
-            if let Ok(app) = app.lock() {
-                if let Some(ui) = app.ui.upgrade() {
-                    ui.set_status_text("Waiting for GPS...".into());
-                }
-            }
-        }
+        // GPS status is shown via gps_status property (ring indicator)
     }
 }
 
@@ -320,6 +390,20 @@ pub extern "C" fn minimap_init(tile_dir: *const std::ffi::c_char) -> bool {
         }
     });
 
+    // Set up interpolation timer (~60 FPS for smooth animation)
+    let timer = slint::Timer::default();
+    timer.start(
+        slint::TimerMode::Repeated,
+        std::time::Duration::from_millis(16), // ~60 FPS
+        move || {
+            if let Some(app) = APP.get() {
+                if let Ok(mut app) = app.lock() {
+                    app.interpolation_tick();
+                }
+            }
+        },
+    );
+
     // Start location updates
     #[cfg(target_os = "ios")]
     ios::start_location_updates();
@@ -336,41 +420,33 @@ pub extern "C" fn minimap_init(tile_dir: *const std::ffi::c_char) -> bool {
     true
 }
 
-/// Manually update GPS position (for testing or external GPS)
+/// Update GPS position with accuracy
+///
+/// # Arguments
+/// * `lat` - Latitude in degrees
+/// * `lon` - Longitude in degrees
+/// * `heading` - Heading in degrees (0-360)
+/// * `speed_kmh` - Speed in km/h
+/// * `accuracy_meters` - Horizontal accuracy in meters (negative = unknown/no signal)
 #[no_mangle]
-pub extern "C" fn minimap_update_gps(lat: f64, lon: f64, heading: f32, speed_kmh: f32) {
+pub extern "C" fn minimap_update_gps(lat: f64, lon: f64, heading: f32, speed_kmh: f32, accuracy_meters: f64) {
     if let Some(app) = APP.get() {
         if let Ok(mut app) = app.lock() {
             app.update_position(lat, lon, heading, speed_kmh);
+            app.set_gps_status_from_accuracy(accuracy_meters);
         }
     }
 }
 
-/// Set GPS active status
+/// Set GPS status directly
+///
+/// # Arguments
+/// * `status` - GPS status: 0 = no signal, 1 = inaccurate, 2 = good
 #[no_mangle]
-pub extern "C" fn minimap_set_gps_active(active: bool) {
+pub extern "C" fn minimap_set_gps_status(status: i32) {
     if let Some(app) = APP.get() {
-        if let Ok(app) = app.lock() {
-            app.set_gps_active(active);
-        }
-    }
-}
-
-/// Set status text
-#[no_mangle]
-pub extern "C" fn minimap_set_status(text: *const std::ffi::c_char) {
-    if text.is_null() {
-        return;
-    }
-
-    let c_str = unsafe { std::ffi::CStr::from_ptr(text) };
-    if let Ok(status) = c_str.to_str() {
-        if let Some(app) = APP.get() {
-            if let Ok(app) = app.lock() {
-                if let Some(ui) = app.ui.upgrade() {
-                    ui.set_status_text(status.into());
-                }
-            }
+        if let Ok(mut app) = app.lock() {
+            app.set_gps_status(status);
         }
     }
 }

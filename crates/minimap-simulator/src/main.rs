@@ -48,6 +48,9 @@ fn main() {
     // Create the Slint UI (simulator wrapper with keyboard support)
     let ui = SimulatorWindow::new().unwrap();
 
+    // Set GPS status to "good" for simulator (no red/yellow ring)
+    ui.set_gps_status(2);
+
     // Set up configuration for 800x800 display
     let config = MinimapConfig {
         screen_width: 800.0,
