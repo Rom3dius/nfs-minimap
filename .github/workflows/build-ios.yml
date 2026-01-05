@@ -57,6 +57,11 @@ jobs:
           cargo run -p minimap-tiles --release --features processor --bin tile-processor -- \
             switzerland.osm.pbf tiles/
 
+      - name: Generate routing tiles
+        run: |
+          cargo run -p minimap-tiles --release --features route-processor --bin route-processor -- \
+            switzerland.osm.pbf tiles/
+
       - name: Build iOS App
         run: |
           cd ios
