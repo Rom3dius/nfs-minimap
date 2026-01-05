@@ -167,9 +167,8 @@ impl<'a> HierarchicalRouter<'a> {
 
     /// Find a route between two points.
     ///
-    /// Uses a fallback strategy: starts at the appropriate level for the distance,
-    /// then falls back to higher levels if routing fails (e.g., if start/end are
-    /// on roads not present at the initial level).
+    /// Uses a level-based strategy: selects the appropriate level based on distance,
+    /// then prepends a local route from the start position to the highway/arterial entry point.
     pub fn find_route(
         &mut self,
         start_lat: f64,
@@ -181,8 +180,9 @@ impl<'a> HierarchicalRouter<'a> {
         let distance = crate::geo::haversine_distance(start_lat, start_lon, end_lat, end_lon);
         let initial_level = Self::select_level(distance);
 
+        log::debug!("Route distance: {:.1} km, initial level: {:?}", distance / 1000.0, initial_level);
+
         // Try levels from the selected level up to Highway, with fallback
-        // This handles cases where start/end are on roads not present at lower levels
         let levels_to_try = match initial_level {
             HierarchyLevel::Local => vec![
                 HierarchyLevel::Local,
@@ -200,10 +200,10 @@ impl<'a> HierarchicalRouter<'a> {
                     self.find_local_route(start_lat, start_lon, end_lat, end_lon)
                 }
                 HierarchyLevel::Arterial => {
-                    self.find_arterial_route(start_lat, start_lon, end_lat, end_lon)
+                    self.find_arterial_route_with_local_connection(start_lat, start_lon, end_lat, end_lon)
                 }
                 HierarchyLevel::Highway => {
-                    self.find_highway_route(start_lat, start_lon, end_lat, end_lon)
+                    self.find_highway_route_with_local_connection(start_lat, start_lon, end_lat, end_lon)
                 }
             };
 
@@ -277,7 +277,155 @@ impl<'a> HierarchicalRouter<'a> {
         self.astar_multi_level(start_node, end_node)
     }
 
+    /// Find a route using arterial level with local road connections.
+    ///
+    /// This method:
+    /// 1. Finds the nearest Local road to start/end (for the short straight line from car)
+    /// 2. Finds the nearest Arterial entry/exit points
+    /// 3. Routes from Local start to Arterial entry using local roads
+    /// 4. Routes on Arterial network
+    /// 5. Routes from Arterial exit to Local end using local roads
+    /// 6. Combines all paths
+    fn find_arterial_route_with_local_connection(
+        &mut self,
+        start_lat: f64,
+        start_lon: f64,
+        end_lat: f64,
+        end_lon: f64,
+    ) -> Option<HierarchicalRoute> {
+        // Load Local tiles around start and end
+        let local_start_tiles = get_visible_tiles(start_lat, start_lon, 0.02, HierarchyLevel::Local);
+        let local_end_tiles = get_visible_tiles(end_lat, end_lon, 0.02, HierarchyLevel::Local);
+        for (tx, ty) in local_start_tiles.iter().chain(local_end_tiles.iter()) {
+            let _ = self.cache.get(HierarchyLevel::Local, *tx, *ty);
+        }
+
+        // Load Arterial tiles around start and end
+        let arterial_start_tiles = get_visible_tiles(start_lat, start_lon, 0.2, HierarchyLevel::Arterial);
+        let arterial_end_tiles = get_visible_tiles(end_lat, end_lon, 0.2, HierarchyLevel::Arterial);
+        for (tx, ty) in arterial_start_tiles.iter().chain(arterial_end_tiles.iter()) {
+            let _ = self.cache.get(HierarchyLevel::Arterial, *tx, *ty);
+        }
+
+        // Find nearest Local nodes (where the car actually is)
+        let local_start = self.find_nearest_node(start_lat, start_lon, HierarchyLevel::Local)?;
+        let local_end = self.find_nearest_node(end_lat, end_lon, HierarchyLevel::Local)?;
+        log::debug!("Local start: {:?}", local_start);
+        log::debug!("Local end: {:?}", local_end);
+
+        // Find nearest Arterial entry/exit points
+        let arterial_start = self.find_nearest_node(start_lat, start_lon, HierarchyLevel::Arterial)?;
+        let arterial_end = self.find_nearest_node(end_lat, end_lon, HierarchyLevel::Arterial)?;
+        log::debug!("Arterial start: {:?}", arterial_start);
+        log::debug!("Arterial end: {:?}", arterial_end);
+
+        // Route on Arterial network
+        let arterial_route = self.astar(arterial_start, arterial_end, HierarchyLevel::Arterial)?;
+        log::debug!("Arterial route found: {} nodes", arterial_route.path.len());
+
+        // Build the combined path
+        let mut combined_path = Vec::new();
+        let mut levels_used = Vec::new();
+
+        // Add local start node (the nearest road to the car)
+        combined_path.push(local_start);
+        levels_used.push(HierarchyLevel::Local);
+
+        // Add the arterial route
+        combined_path.extend(arterial_route.path.iter().cloned());
+        if !levels_used.contains(&HierarchyLevel::Arterial) {
+            levels_used.push(HierarchyLevel::Arterial);
+        }
+
+        // Add local end node if different from last arterial node
+        if local_end.lat_micro != arterial_end.lat_micro || local_end.lon_micro != arterial_end.lon_micro {
+            combined_path.push(local_end);
+        }
+
+        Some(HierarchicalRoute {
+            path: combined_path,
+            total_distance_m: arterial_route.total_distance_m,
+            total_time_s: arterial_route.total_time_s,
+            nodes_explored: arterial_route.nodes_explored,
+            levels_used,
+        })
+    }
+
+    /// Find a route using highway level with local road connections.
+    ///
+    /// Similar to find_arterial_route_with_local_connection but for Highway level.
+    fn find_highway_route_with_local_connection(
+        &mut self,
+        start_lat: f64,
+        start_lon: f64,
+        end_lat: f64,
+        end_lon: f64,
+    ) -> Option<HierarchicalRoute> {
+        // Load Local tiles around start and end
+        let local_start_tiles = get_visible_tiles(start_lat, start_lon, 0.02, HierarchyLevel::Local);
+        let local_end_tiles = get_visible_tiles(end_lat, end_lon, 0.02, HierarchyLevel::Local);
+        for (tx, ty) in local_start_tiles.iter().chain(local_end_tiles.iter()) {
+            let _ = self.cache.get(HierarchyLevel::Local, *tx, *ty);
+        }
+
+        // Load Highway tiles around start and end
+        let highway_start_tiles = get_visible_tiles(start_lat, start_lon, 1.0, HierarchyLevel::Highway);
+        let highway_end_tiles = get_visible_tiles(end_lat, end_lon, 1.0, HierarchyLevel::Highway);
+        for (tx, ty) in highway_start_tiles.iter().chain(highway_end_tiles.iter()) {
+            let _ = self.cache.get(HierarchyLevel::Highway, *tx, *ty);
+        }
+
+        // Find nearest Local nodes (where the car actually is)
+        let local_start = self.find_nearest_node(start_lat, start_lon, HierarchyLevel::Local)?;
+        let local_end = self.find_nearest_node(end_lat, end_lon, HierarchyLevel::Local)?;
+        log::debug!("Local start: {:?}", local_start);
+        log::debug!("Local end: {:?}", local_end);
+
+        // Find nearest Highway entry/exit points
+        let highway_start = self.find_nearest_node(start_lat, start_lon, HierarchyLevel::Highway)?;
+        let highway_end = self.find_nearest_node(end_lat, end_lon, HierarchyLevel::Highway)?;
+        log::debug!("Highway start: {:?}", highway_start);
+        log::debug!("Highway end: {:?}", highway_end);
+
+        // Route on Highway network
+        let highway_route = self.astar(highway_start, highway_end, HierarchyLevel::Highway)?;
+        log::debug!("Highway route found: {} nodes", highway_route.path.len());
+
+        // Build the combined path
+        let mut combined_path = Vec::new();
+        let mut levels_used = Vec::new();
+
+        // Add local start node (the nearest road to the car)
+        combined_path.push(local_start);
+        levels_used.push(HierarchyLevel::Local);
+
+        // Add the highway route
+        combined_path.extend(highway_route.path.iter().cloned());
+        if !levels_used.contains(&HierarchyLevel::Highway) {
+            levels_used.push(HierarchyLevel::Highway);
+        }
+
+        // Add local end node if different from last highway node
+        if local_end.lat_micro != highway_end.lat_micro || local_end.lon_micro != highway_end.lon_micro {
+            combined_path.push(local_end);
+        }
+
+        Some(HierarchicalRoute {
+            path: combined_path,
+            total_distance_m: highway_route.total_distance_m,
+            total_time_s: highway_route.total_time_s,
+            nodes_explored: highway_route.nodes_explored,
+            levels_used,
+        })
+    }
+
     /// Find a route using arterial level (Level 1).
+    ///
+    /// First snaps start/end to Local level to find the nearest road,
+    /// then routes through the Arterial network.
+    ///
+    /// Note: Currently unused - kept for potential future use.
+    #[allow(dead_code)]
     fn find_arterial_route(
         &mut self,
         start_lat: f64,
@@ -287,9 +435,25 @@ impl<'a> HierarchicalRouter<'a> {
     ) -> Option<HierarchicalRoute> {
         let level = HierarchyLevel::Arterial;
 
+        // First, snap to Local level to find the actual nearest road
+        let local_start = self.find_nearest_node(start_lat, start_lon, HierarchyLevel::Local);
+        let local_end = self.find_nearest_node(end_lat, end_lon, HierarchyLevel::Local);
+
+        // Use Local-snapped coordinates for finding Arterial access points
+        let (arterial_start_lat, arterial_start_lon) = if let Some(ref node) = local_start {
+            (node.lat_micro as f64 / 1_000_000.0, node.lon_micro as f64 / 1_000_000.0)
+        } else {
+            (start_lat, start_lon)
+        };
+        let (arterial_end_lat, arterial_end_lon) = if let Some(ref node) = local_end {
+            (node.lat_micro as f64 / 1_000_000.0, node.lon_micro as f64 / 1_000_000.0)
+        } else {
+            (end_lat, end_lon)
+        };
+
         // Load tiles around start and end
-        let start_tiles = get_visible_tiles(start_lat, start_lon, 0.2, level);
-        let end_tiles = get_visible_tiles(end_lat, end_lon, 0.2, level);
+        let start_tiles = get_visible_tiles(arterial_start_lat, arterial_start_lon, 0.2, level);
+        let end_tiles = get_visible_tiles(arterial_end_lat, arterial_end_lon, 0.2, level);
 
         log::debug!("Arterial route: loading {} start tiles, {} end tiles", start_tiles.len(), end_tiles.len());
 
@@ -302,27 +466,57 @@ impl<'a> HierarchicalRouter<'a> {
         }
 
         // Find start and end nodes on arterial network
-        let start_node = self.find_nearest_node(start_lat, start_lon, level);
-        if start_node.is_none() {
-            log::warn!("Could not find arterial start node near ({}, {})", start_lat, start_lon);
+        let arterial_start = self.find_nearest_node(arterial_start_lat, arterial_start_lon, level);
+        if arterial_start.is_none() {
+            log::warn!("Could not find arterial start node near ({}, {})", arterial_start_lat, arterial_start_lon);
             return None;
         }
-        let start_node = start_node.unwrap();
-        log::debug!("Arterial start node: {:?}", start_node);
+        let arterial_start = arterial_start.unwrap();
+        log::debug!("Arterial start node: {:?}", arterial_start);
 
-        let end_node = self.find_nearest_node(end_lat, end_lon, level);
-        if end_node.is_none() {
-            log::warn!("Could not find arterial end node near ({}, {})", end_lat, end_lon);
+        let arterial_end = self.find_nearest_node(arterial_end_lat, arterial_end_lon, level);
+        if arterial_end.is_none() {
+            log::warn!("Could not find arterial end node near ({}, {})", arterial_end_lat, arterial_end_lon);
             return None;
         }
-        let end_node = end_node.unwrap();
-        log::debug!("Arterial end node: {:?}", end_node);
+        let arterial_end = arterial_end.unwrap();
+        log::debug!("Arterial end node: {:?}", arterial_end);
 
-        // Run bidirectional A*
-        self.astar(start_node, end_node, level)
+        // Run A* on arterial network
+        let mut route = self.astar(arterial_start, arterial_end, level)?;
+
+        // Prepend Local start node if different from Arterial start
+        if let Some(local_node) = local_start {
+            if local_node.lat_micro != arterial_start.lat_micro
+                || local_node.lon_micro != arterial_start.lon_micro
+            {
+                route.path.insert(0, local_node);
+                route.levels_used.push(HierarchyLevel::Local);
+            }
+        }
+
+        // Append Local end node if different from Arterial end
+        if let Some(local_node) = local_end {
+            if local_node.lat_micro != arterial_end.lat_micro
+                || local_node.lon_micro != arterial_end.lon_micro
+            {
+                route.path.push(local_node);
+                if !route.levels_used.contains(&HierarchyLevel::Local) {
+                    route.levels_used.push(HierarchyLevel::Local);
+                }
+            }
+        }
+
+        Some(route)
     }
 
     /// Find a route using highway backbone (Level 0).
+    ///
+    /// First snaps start/end to Local level to find the nearest road,
+    /// then routes through the Highway network.
+    ///
+    /// Note: Currently unused - kept for potential future use.
+    #[allow(dead_code)]
     fn find_highway_route(
         &mut self,
         start_lat: f64,
@@ -330,37 +524,71 @@ impl<'a> HierarchicalRouter<'a> {
         end_lat: f64,
         end_lon: f64,
     ) -> Option<HierarchicalRoute> {
-        // For highway routing, we use the always-loaded highway graph
-        // First, find entry/exit points to the highway network
-
         let highway_level = HierarchyLevel::Highway;
 
+        // First, snap to Local level to find the actual nearest road
+        let local_start = self.find_nearest_node(start_lat, start_lon, HierarchyLevel::Local);
+        let local_end = self.find_nearest_node(end_lat, end_lon, HierarchyLevel::Local);
+
+        // Use Local-snapped coordinates for finding Highway access points
+        let (highway_start_lat, highway_start_lon) = if let Some(ref node) = local_start {
+            (node.lat_micro as f64 / 1_000_000.0, node.lon_micro as f64 / 1_000_000.0)
+        } else {
+            (start_lat, start_lon)
+        };
+        let (highway_end_lat, highway_end_lon) = if let Some(ref node) = local_end {
+            (node.lat_micro as f64 / 1_000_000.0, node.lon_micro as f64 / 1_000_000.0)
+        } else {
+            (end_lat, end_lon)
+        };
+
         // Find nearest highway nodes
-        let start_highway = self.find_nearest_node(start_lat, start_lon, highway_level);
+        let start_highway = self.find_nearest_node(highway_start_lat, highway_start_lon, highway_level);
         if start_highway.is_none() {
-            log::warn!("Could not find highway start node near ({}, {})", start_lat, start_lon);
+            log::warn!("Could not find highway start node near ({}, {})", highway_start_lat, highway_start_lon);
             return None;
         }
         let start_highway = start_highway.unwrap();
         log::debug!("Highway start node: {:?}", start_highway);
 
-        let end_highway = self.find_nearest_node(end_lat, end_lon, highway_level);
+        let end_highway = self.find_nearest_node(highway_end_lat, highway_end_lon, highway_level);
         if end_highway.is_none() {
-            log::warn!("Could not find highway end node near ({}, {})", end_lat, end_lon);
+            log::warn!("Could not find highway end node near ({}, {})", highway_end_lat, highway_end_lon);
             return None;
         }
         let end_highway = end_highway.unwrap();
         log::debug!("Highway end node: {:?}", end_highway);
 
         // Route on highway network
-        let highway_route = self.astar(start_highway, end_highway, highway_level)?;
+        let mut route = self.astar(start_highway, end_highway, highway_level)?;
 
-        // TODO: Connect local roads to highway entry/exit points
-        // For now, just return the highway route
+        // Prepend Local start node if different from Highway start
+        if let Some(local_node) = local_start {
+            if local_node.lat_micro != start_highway.lat_micro
+                || local_node.lon_micro != start_highway.lon_micro
+            {
+                route.path.insert(0, local_node);
+            }
+        }
 
+        // Append Local end node if different from Highway end
+        if let Some(local_node) = local_end {
+            if local_node.lat_micro != end_highway.lat_micro
+                || local_node.lon_micro != end_highway.lon_micro
+            {
+                route.path.push(local_node);
+            }
+        }
+
+        // Update levels used
+        let has_local = local_start.is_some() || local_end.is_some();
         Some(HierarchicalRoute {
-            levels_used: vec![HierarchyLevel::Highway],
-            ..highway_route
+            levels_used: if has_local {
+                vec![HierarchyLevel::Local, HierarchyLevel::Highway]
+            } else {
+                vec![HierarchyLevel::Highway]
+            },
+            ..route
         })
     }
 
@@ -618,51 +846,53 @@ impl<'a> HierarchicalRouter<'a> {
         );
 
         // 2. Add level transitions (same physical location, different level)
-        // This allows switching between Local and Arterial roads
-        let other_level = match node.level {
-            HierarchyLevel::Local => HierarchyLevel::Arterial,
-            HierarchyLevel::Arterial => HierarchyLevel::Local,
-            HierarchyLevel::Highway => return, // No transition from Highway in local routing
+        // This allows switching between all hierarchy levels: Local ↔ Arterial ↔ Highway
+        let other_levels: &[HierarchyLevel] = match node.level {
+            HierarchyLevel::Local => &[HierarchyLevel::Arterial],
+            HierarchyLevel::Arterial => &[HierarchyLevel::Local, HierarchyLevel::Highway],
+            HierarchyLevel::Highway => &[HierarchyLevel::Arterial],
         };
 
-        // Find the same location at the other level
-        let lat = node.lat_micro as f64 / 1_000_000.0;
-        let lon = node.lon_micro as f64 / 1_000_000.0;
-        let (tile_x, tile_y) = lat_lon_to_tile(lat, lon, other_level);
+        for &other_level in other_levels {
+            // Find the same location at the other level
+            let lat = node.lat_micro as f64 / 1_000_000.0;
+            let lon = node.lon_micro as f64 / 1_000_000.0;
+            let (tile_x, tile_y) = lat_lon_to_tile(lat, lon, other_level);
 
-        // Find the same location at other level (extract data to avoid borrow conflict)
-        let transition_node = if let Some(tile) = self.cache.get(other_level, tile_x, tile_y) {
-            tile.nodes
-                .iter()
-                .enumerate()
-                .find(|(_, n)| n.lat == node.lat_micro && n.lon == node.lon_micro)
-                .map(|(idx, n)| {
-                    GlobalNodeId::with_coords(other_level, tile_x, tile_y, idx as u32, n.lat, n.lon)
-                })
-        } else {
-            None
-        };
+            // Find the same location at other level (extract data to avoid borrow conflict)
+            let transition_node = if let Some(tile) = self.cache.get(other_level, tile_x, tile_y) {
+                tile.nodes
+                    .iter()
+                    .enumerate()
+                    .find(|(_, n)| n.lat == node.lat_micro && n.lon == node.lon_micro)
+                    .map(|(idx, n)| {
+                        GlobalNodeId::with_coords(other_level, tile_x, tile_y, idx as u32, n.lat, n.lon)
+                    })
+            } else {
+                None
+            };
 
-        if let Some(neighbor_id) = transition_node {
-            if !closed.contains(&neighbor_id) {
-                // Level transition has zero cost (same physical location)
-                let tentative_g = g_cost;
+            if let Some(neighbor_id) = transition_node {
+                if !closed.contains(&neighbor_id) {
+                    // Level transition has zero cost (same physical location)
+                    let tentative_g = g_cost;
 
-                let is_better = match g_costs.get(&neighbor_id) {
-                    Some(&existing) => tentative_g < existing,
-                    None => true,
-                };
+                    let is_better = match g_costs.get(&neighbor_id) {
+                        Some(&existing) => tentative_g < existing,
+                        None => true,
+                    };
 
-                if is_better {
-                    came_from.insert(neighbor_id, *node);
-                    g_costs.insert(neighbor_id, tentative_g);
+                    if is_better {
+                        came_from.insert(neighbor_id, *node);
+                        g_costs.insert(neighbor_id, tentative_g);
 
-                    let h = self.heuristic_micro(neighbor_id.lat_micro, neighbor_id.lon_micro, target_lat, target_lon);
-                    open.push(SearchEntry {
-                        node: neighbor_id,
-                        g_cost: tentative_g,
-                        f_cost: tentative_g.saturating_add(h),
-                    });
+                        let h = self.heuristic_micro(neighbor_id.lat_micro, neighbor_id.lon_micro, target_lat, target_lon);
+                        open.push(SearchEntry {
+                            node: neighbor_id,
+                            g_cost: tentative_g,
+                            f_cost: tentative_g.saturating_add(h),
+                        });
+                    }
                 }
             }
         }
