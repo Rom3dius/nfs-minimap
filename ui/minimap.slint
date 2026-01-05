@@ -769,6 +769,98 @@ component LegendPanel inherits Rectangle {
 }
 
 // ============================================================================
+// Error Popup Component (centered for round display)
+// ============================================================================
+
+component ErrorPopup inherits Rectangle {
+    in-out property <bool> popup-visible: false;
+    in property <string> message: "";
+    callback dismiss();
+
+    width: 100%;
+    height: 100%;
+    background: popup-visible ? #000000a0 : transparent;
+
+    // Block touches when visible
+    TouchArea {
+        enabled: root.popup-visible;
+        clicked => { dismiss(); }
+    }
+
+    // Error dialog - centered circle for round display
+    Rectangle {
+        visible: root.popup-visible;
+        width: min(300px, parent.width - 60px);
+        height: self.width;  // Keep it square/circular
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        background: ThemeManager.colors.panel-bg;
+        border-radius: self.width / 2;  // Make it circular
+        border-width: 3px;
+        border-color: #e74c3c;  // Red border for error
+
+        TouchArea {
+            // Prevent clicks from dismissing when clicking on popup
+            clicked => { }
+        }
+
+        VerticalLayout {
+            padding: 40px;
+            spacing: 16px;
+            alignment: center;
+
+            // Error icon
+            Text {
+                text: "!";
+                font-size: 48px;
+                font-weight: 900;
+                color: #e74c3c;
+                horizontal-alignment: center;
+            }
+
+            // Error title
+            Text {
+                text: "Error";
+                font-size: 18px;
+                font-weight: 700;
+                color: ThemeManager.colors.text-color;
+                horizontal-alignment: center;
+            }
+
+            // Error message
+            Text {
+                text: message;
+                font-size: 13px;
+                color: ThemeManager.colors.text-secondary;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+
+            // Dismiss button
+            Rectangle {
+                width: 100px;
+                height: 36px;
+                background: #e74c3c;
+                border-radius: 18px;
+
+                Text {
+                    text: "Dismiss";
+                    font-size: 14px;
+                    font-weight: 600;
+                    color: white;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                TouchArea {
+                    clicked => { dismiss(); }
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
 // Zoom Controls Component
 // ============================================================================
 
@@ -1064,6 +1156,11 @@ export component MinimapView inherits Rectangle {
     // GPS status: 0 = no signal (red ring), 1 = inaccurate (yellow ring), 2 = good (no ring)
     in property <int> gps-status: 0;
 
+    // Error display
+    in-out property <bool> error-visible: false;
+    in property <string> error-message: "";
+    callback dismiss-error();
+
     // Zoom callbacks
     callback zoom-in();
     callback zoom-out();
@@ -1332,6 +1429,16 @@ export component MinimapView inherits Rectangle {
             root.search(query);
         }
         route-to(lat, lon) => { root.route-to(lat, lon); }
+    }
+
+    // Error popup (shown on top of everything)
+    ErrorPopup {
+        popup-visible: error-visible;
+        message: error-message;
+        dismiss => {
+            error-visible = false;
+            root.dismiss-error();
+        }
     }
 
 }

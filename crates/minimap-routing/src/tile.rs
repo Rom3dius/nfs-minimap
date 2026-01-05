@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use thiserror::Error;
 
 use crate::types::{HierarchyLevel, RoutingTile, TileError};
 
@@ -156,26 +157,17 @@ impl TileLoader {
 }
 
 /// Errors from tile loading operations.
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum TileLoaderError {
+    #[error("routing directory not found: {}", .0.display())]
     DirectoryNotFound(PathBuf),
+    #[error("tile file not found: {}", .0.display())]
     FileNotFound(PathBuf),
+    #[error("IO error: {0}")]
     IoError(String),
-    TileError(TileError),
+    #[error("tile error: {0}")]
+    TileError(#[from] TileError),
 }
-
-impl std::fmt::Display for TileLoaderError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TileLoaderError::DirectoryNotFound(p) => write!(f, "directory not found: {}", p.display()),
-            TileLoaderError::FileNotFound(p) => write!(f, "file not found: {}", p.display()),
-            TileLoaderError::IoError(e) => write!(f, "IO error: {}", e),
-            TileLoaderError::TileError(e) => write!(f, "tile error: {}", e),
-        }
-    }
-}
-
-impl std::error::Error for TileLoaderError {}
 
 /// Parse tile coordinates from "x,y" format.
 fn parse_tile_coords(s: &str) -> Option<(i32, i32)> {

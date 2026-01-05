@@ -8,8 +8,8 @@ extern crate alloc;
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use core::fmt;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 /// Routing hierarchy levels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -465,27 +465,17 @@ impl RoutingTile {
 }
 
 /// Errors that can occur when loading tiles.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Error)]
 pub enum TileError {
+    #[error("tile data too short (expected at least 5 bytes)")]
     TooShort,
+    #[error("invalid magic bytes (expected 'RTIL')")]
     InvalidMagic,
+    #[error("unsupported tile version: {0}")]
     UnsupportedVersion(u8),
+    #[error("deserialization failed: {0}")]
     DeserializationFailed(String),
 }
-
-impl fmt::Display for TileError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            TileError::TooShort => write!(f, "tile data too short"),
-            TileError::InvalidMagic => write!(f, "invalid magic bytes"),
-            TileError::UnsupportedVersion(v) => write!(f, "unsupported version: {}", v),
-            TileError::DeserializationFailed(e) => write!(f, "deserialization failed: {}", e),
-        }
-    }
-}
-
-#[cfg(feature = "loader")]
-impl std::error::Error for TileError {}
 
 /// Tile coordinate helper functions.
 pub fn lat_lon_to_tile(lat: f64, lon: f64, level: HierarchyLevel) -> (i32, i32) {

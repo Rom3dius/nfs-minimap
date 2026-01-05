@@ -15,6 +15,11 @@ export component SimulatorWindow inherits Window {
     // GPS status: 0 = no signal, 1 = inaccurate, 2 = good (default to good for simulator)
     in property <int> gps-status <=> map.gps-status;
 
+    // Error display
+    in-out property <bool> error-visible <=> map.error-visible;
+    in property <string> error-message <=> map.error-message;
+    callback dismiss-error <=> map.dismiss-error;
+
     // Search functionality
     in property <[SearchResultItem]> search-results <=> map.search-results;
     callback search <=> map.search;

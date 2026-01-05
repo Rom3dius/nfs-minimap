@@ -3069,6 +3069,7 @@ dependencies = [
  "lru",
  "memmap2 0.9.9",
  "serde",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -3096,6 +3097,7 @@ dependencies = [
  "osmpbf",
  "rayon",
  "serde",
+ "thiserror 2.0.17",
 ]
 
 [[package]]

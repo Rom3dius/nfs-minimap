@@ -9,8 +9,39 @@
 
 extern crate alloc;
 
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+/// Errors that can occur when working with tiles.
+#[derive(Debug, Error)]
+pub enum TileError {
+    #[error("tile data too short (expected at least 5 bytes)")]
+    DataTooShort,
+    #[error("invalid magic bytes (expected 'MMAP')")]
+    InvalidMagic,
+    #[error("unsupported tile version: {0} (expected {TILE_VERSION})")]
+    UnsupportedVersion(u8),
+    #[error("serialization failed: {0}")]
+    SerializationFailed(String),
+    #[error("deserialization failed: {0}")]
+    DeserializationFailed(String),
+}
+
+/// Errors that can occur when loading tiles from the filesystem.
+#[cfg(feature = "loader")]
+#[derive(Debug, Error)]
+pub enum TileLoaderError {
+    #[error("tile directory not found: {0}")]
+    DirectoryNotFound(std::path::PathBuf),
+    #[error("failed to read tile index: {0}")]
+    IndexReadError(String),
+    #[error("failed to read tile file: {0}")]
+    TileReadError(String),
+    #[error("tile error: {0}")]
+    TileError(#[from] TileError),
+}
 
 /// Tile size in degrees (approximately 1.1km at Swiss latitudes)
 pub const TILE_SIZE_DEG: f64 = 0.01;
@@ -137,29 +168,31 @@ impl Tile {
     }
 
     /// Serialize tile to bytes
-    pub fn to_bytes(&self) -> Result<Vec<u8>, &'static str> {
+    pub fn to_bytes(&self) -> Result<Vec<u8>, TileError> {
         let mut data = Vec::new();
         data.extend_from_slice(&TILE_MAGIC);
         data.push(TILE_VERSION);
 
-        let encoded = bincode::serialize(self).map_err(|_| "serialization failed")?;
+        let encoded = bincode::serialize(self)
+            .map_err(|e| TileError::SerializationFailed(e.to_string()))?;
         data.extend_from_slice(&encoded);
         Ok(data)
     }
 
     /// Deserialize tile from bytes
-    pub fn from_bytes(data: &[u8]) -> Result<Self, &'static str> {
+    pub fn from_bytes(data: &[u8]) -> Result<Self, TileError> {
         if data.len() < 5 {
-            return Err("data too short");
+            return Err(TileError::DataTooShort);
         }
         if &data[0..4] != &TILE_MAGIC {
-            return Err("invalid magic bytes");
+            return Err(TileError::InvalidMagic);
         }
         if data[4] != TILE_VERSION {
-            return Err("unsupported version");
+            return Err(TileError::UnsupportedVersion(data[4]));
         }
 
-        bincode::deserialize(&data[5..]).map_err(|_| "deserialization failed")
+        bincode::deserialize(&data[5..])
+            .map_err(|e| TileError::DeserializationFailed(e.to_string()))
     }
 }
 
@@ -223,6 +256,9 @@ pub mod loader {
     use std::fs;
     use std::path::{Path, PathBuf};
 
+    // Re-export TileLoaderError for convenience
+    pub use super::TileLoaderError;
+
     /// Runtime tile loader
     pub struct TileLoader {
         tile_dir: PathBuf,
@@ -232,8 +268,12 @@ pub mod loader {
 
     impl TileLoader {
         /// Create a new tile loader from a directory
-        pub fn new<P: AsRef<Path>>(tile_dir: P) -> Result<Self, &'static str> {
+        pub fn new<P: AsRef<Path>>(tile_dir: P) -> Result<Self, TileLoaderError> {
             let tile_dir = tile_dir.as_ref().to_path_buf();
+
+            if !tile_dir.exists() {
+                return Err(TileLoaderError::DirectoryNotFound(tile_dir));
+            }
 
             // Read index file to know which tiles are available
             let index_path = tile_dir.join("index.txt");
@@ -370,6 +410,7 @@ pub mod loader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn test_tile_coords() {

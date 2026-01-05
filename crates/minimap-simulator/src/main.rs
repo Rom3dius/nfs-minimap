@@ -30,9 +30,10 @@ use minimap_tiles::loader::TileLoader;
 
 slint::include_modules!();
 
-use slint::{ComponentHandle, ModelRc, VecModel};
+use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use std::cell::RefCell;
 use std::collections::HashSet;
+use std::error::Error;
 use std::path::Path;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -43,7 +44,14 @@ enum MapSource {
     Static,
 }
 
-fn main() {
+/// Helper function to show an error in the UI
+fn show_error(ui: &SimulatorWindow, message: &str) {
+    log::error!("{}", message);
+    ui.set_error_message(SharedString::from(message));
+    ui.set_error_visible(true);
+}
+
+fn main() -> Result<(), Box<dyn Error>> {
     env_logger::init();
     log::info!("Starting NFS2 Minimap Simulator");
 
@@ -51,7 +59,7 @@ fn main() {
     let tile_dir = args.get(1);
 
     // Create the Slint UI (simulator wrapper with keyboard support)
-    let ui = SimulatorWindow::new().unwrap();
+    let ui = SimulatorWindow::new()?;
 
     // Set GPS status to "good" for simulator (no red/yellow ring)
     ui.set_gps_status(2);
@@ -403,8 +411,15 @@ fn main() {
         },
     );
 
+    // Set up dismiss-error callback
+    ui.on_dismiss_error(|| {
+        log::debug!("Error dismissed");
+    });
+
     log::info!("Simulator ready. WASD=move, Q/E=zoom, C=clear route, H=theme. Tap screen for search.");
-    ui.run().unwrap();
+    ui.run()?;
+
+    Ok(())
 }
 
 fn load_from_overpass(renderer: &mut MapRenderer, lat: f64, lon: f64) {
