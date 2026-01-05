@@ -16,14 +16,24 @@ osmpbf = { version = "0.3", optional = true }
 env_logger = { workspace = true, optional = true }
 rayon = { version = "1.10", optional = true }
 
+# For route processor binary
+minimap-routing = { path = "../minimap-routing", features = ["loader", "search"], optional = true }
+
 [features]
 default = []
 # Enables the tile loader (requires std)
 loader = []
 # Enables the tile processor binary (requires std + heavy deps)
 processor = ["loader", "osmpbf", "env_logger", "rayon"]
+# Enables the route processor binary
+route-processor = ["processor", "minimap-routing"]
 
 [[bin]]
 name = "tile-processor"
 path = "src/bin/processor.rs"
 required-features = ["processor"]
+
+[[bin]]
+name = "route-processor"
+path = "src/bin/route_processor.rs"
+required-features = ["route-processor"]

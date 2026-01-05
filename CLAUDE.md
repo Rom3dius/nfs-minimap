@@ -21,9 +21,13 @@ cargo test                      # all tests
 cargo test -p minimap-core      # specific crate
 cargo test -p minimap-tiles
 
-# Process OSM data to tiles
+# Process OSM data to render tiles
 cargo run -p minimap-tiles --release --features processor \
   --bin tile-processor -- <input.osm.pbf> <output-dir>
+
+# Process OSM data to routing tiles
+cargo run -p minimap-tiles --release --features route-processor \
+  --bin route-processor -- <input.osm.pbf> <output-dir>
 
 # Mobile builds (requires cargo-mobile2)
 cargo apple run --simulator     # iOS Simulator
@@ -39,6 +43,7 @@ cargo android run               # Android
 crates/
 ├── minimap-core     # Platform-agnostic rendering engine
 ├── minimap-tiles    # Binary tile format and loader (no_std compatible)
+├── minimap-routing  # Hierarchical routing engine (no_std compatible)
 ├── minimap-simulator # Desktop dev simulator with WASD
 ├── minimap-mobile   # iOS/Android FFI layer
 └── minimap-esp32p4  # ESP32 firmware (currently commented out)
@@ -72,6 +77,30 @@ Slint UI renders screen-coordinate data
 Binary format with "MMAP" magic header, version 2. Tiles are 0.01° (~1.1km). Supports:
 - `loader` feature: Runtime tile loading with HashMap cache
 - `processor` feature: OSM PBF → tile conversion (heavy deps: osmpbf, rayon)
+- `route-processor` feature: OSM PBF → routing tile conversion
+
+### Routing System (minimap-routing)
+
+Hierarchical routing engine for country-scale navigation on memory-constrained devices (32MB PSRAM).
+
+Three-level tile hierarchy:
+| Level | Tile Size | Roads | Strategy |
+|-------|-----------|-------|----------|
+| Highway (0) | 1.0° | motorway, trunk, primary | Always loaded |
+| Arterial (1) | 0.1° | secondary, tertiary | LRU cache |
+| Local (2) | 0.01° | residential, service | On-demand |
+
+Level selection by distance:
+- < 5km: Local tiles only
+- 5-50km: Arterial + local endpoints
+- > 50km: Highway backbone + transitions
+
+Key types:
+- `RoutingNode` (16 bytes) - microdegree coordinates, edge indices
+- `RoutingEdge` (12 bytes) - target, distance, speed, road class
+- `RoutingTile` - nodes, edges, name table for a tile
+- `Router` - high-level API with automatic level selection
+- `HierarchicalRouter` - bidirectional A* across hierarchy levels
 
 ### Slint UI Components
 
@@ -95,6 +124,10 @@ minimap_set_status(text)            // Status text
 - `crates/minimap-core/src/geo.rs` - Coordinate math (equirectangular projection, haversine)
 - `crates/minimap-core/src/transform.rs` - Viewport transformations
 - `crates/minimap-tiles/src/lib.rs` - Tile format and loader
+- `crates/minimap-routing/src/router.rs` - High-level routing API
+- `crates/minimap-routing/src/hierarchy.rs` - Hierarchical multi-level routing
+- `crates/minimap-routing/src/algorithm.rs` - A* pathfinding implementation
+- `crates/minimap-tiles/src/bin/route_processor.rs` - OSM → routing tile converter
 - `crates/minimap-simulator/src/main.rs` - Desktop simulator entry point
 
 ## Technology

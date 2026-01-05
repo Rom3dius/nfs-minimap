@@ -216,6 +216,31 @@ pub struct ScreenSegment {
     pub road_type: i32,
 }
 
+/// A navigation route to display on the map
+#[derive(Debug, Clone, Default)]
+pub struct Route {
+    /// Path as lat/lon coordinates
+    pub path: Vec<(f64, f64)>,
+    /// Total distance in meters
+    pub total_distance_m: f64,
+    /// Estimated time in seconds
+    pub total_time_s: f64,
+}
+
+impl Route {
+    pub fn new(path: Vec<(f64, f64)>, total_distance_m: f64, total_time_s: f64) -> Self {
+        Self {
+            path,
+            total_distance_m,
+            total_time_s,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.path.len() < 2
+    }
+}
+
 /// The main map renderer
 pub struct MapRenderer {
     config: MinimapConfig,
@@ -223,6 +248,8 @@ pub struct MapRenderer {
     pois: Vec<WorldPoi>,
     areas: Vec<WorldArea>,
     waterways: Vec<WorldWaterway>,
+    /// Current navigation route (if any)
+    route: Option<Route>,
 }
 
 impl MapRenderer {
@@ -233,6 +260,7 @@ impl MapRenderer {
             pois: Vec::new(),
             areas: Vec::new(),
             waterways: Vec::new(),
+            route: None,
         }
     }
 
@@ -274,6 +302,30 @@ impl MapRenderer {
     /// Get a reference to the loaded waterways
     pub fn waterways(&self) -> &[WorldWaterway] {
         &self.waterways
+    }
+
+    /// Set the current navigation route
+    pub fn set_route(&mut self, route: Route) {
+        if route.is_empty() {
+            self.route = None;
+        } else {
+            self.route = Some(route);
+        }
+    }
+
+    /// Clear the current navigation route
+    pub fn clear_route(&mut self) {
+        self.route = None;
+    }
+
+    /// Get a reference to the current route (if any)
+    pub fn route(&self) -> Option<&Route> {
+        self.route.as_ref()
+    }
+
+    /// Check if there's an active route
+    pub fn has_route(&self) -> bool {
+        self.route.is_some()
     }
 
     /// Update configuration
@@ -349,6 +401,63 @@ impl MapRenderer {
                         road_type: road.road_type.to_int(),
                     });
                 }
+            }
+        }
+
+        segments
+    }
+
+    /// Transform the navigation route to screen coordinates
+    /// Returns segments with RoadType::Highlight
+    pub fn render_route(&self, vehicle: &VehicleState) -> Vec<ScreenSegment> {
+        let mut segments = Vec::new();
+
+        let route = match &self.route {
+            Some(r) => r,
+            None => return segments,
+        };
+
+        if route.path.len() < 2 {
+            return segments;
+        }
+
+        let center = Point2::new(
+            self.config.screen_width / 2.0,
+            self.config.screen_height / 2.0,
+        );
+
+        let transform = self.build_transform(vehicle);
+
+        for window in route.path.windows(2) {
+            let (lat1, lon1) = window[0];
+            let (lat2, lon2) = window[1];
+
+            let local1 = geo::lat_lon_to_local_meters(
+                lat1, lon1,
+                vehicle.latitude, vehicle.longitude,
+            );
+            let local2 = geo::lat_lon_to_local_meters(
+                lat2, lon2,
+                vehicle.latitude, vehicle.longitude,
+            );
+
+            let screen1 = transform_point(&transform, &local1, &center, self.config.meters_per_pixel);
+            let screen2 = transform_point(&transform, &local2, &center, self.config.meters_per_pixel);
+
+            let margin = 50.0;
+            if is_segment_visible(
+                &screen1, &screen2,
+                self.config.screen_width,
+                self.config.screen_height,
+                margin,
+            ) {
+                segments.push(ScreenSegment {
+                    x1: screen1.x,
+                    y1: screen1.y,
+                    x2: screen2.x,
+                    y2: screen2.y,
+                    road_type: RoadType::Highlight.to_int(),
+                });
             }
         }
 

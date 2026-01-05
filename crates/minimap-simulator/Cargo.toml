@@ -11,6 +11,7 @@ path = "src/main.rs"
 [dependencies]
 minimap-core = { path = "../minimap-core" }
 minimap-tiles = { path = "../minimap-tiles", features = ["loader"] }
+minimap-routing = { path = "../minimap-routing", features = ["loader", "search"] }
 slint = { workspace = true, features = ["backend-winit"] }
 log.workspace = true
 env_logger.workspace = true

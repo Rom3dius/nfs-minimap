@@ -16,12 +16,16 @@
 //! - D: Rotate right
 //! - Q: Zoom in
 //! - E: Zoom out
+//! - C: Clear route
+//! - H: Cycle color theme
+//! - Tap screen: Show UI buttons (search, settings, etc.)
 
 use minimap_core::{
     map_data::{self, BoundingBox},
-    AreaType, MapRenderer, MinimapConfig, PoiType, RoadType, VehicleState, WaterwayType,
+    AreaType, MapRenderer, MinimapConfig, PoiType, RoadType, Route, VehicleState, WaterwayType,
     WorldArea, WorldPoi, WorldRoad, WorldWaterway,
 };
+use minimap_routing::{Router, SearchIndex};
 use minimap_tiles::loader::TileLoader;
 
 slint::include_modules!();
@@ -29,6 +33,7 @@ slint::include_modules!();
 use slint::{ComponentHandle, ModelRc, VecModel};
 use std::cell::RefCell;
 use std::collections::HashSet;
+use std::path::Path;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -66,21 +71,66 @@ fn main() {
     let center_lat = 47.1415;
     let center_lon = 8.4320;
 
-    // Initialize map source
-    let map_source = if let Some(dir) = tile_dir {
+    // Initialize map source, optional router, and search index
+    let (map_source, router, search_index) = if let Some(dir) = tile_dir {
         log::info!("Using tile-based loading from: {}", dir);
-        match TileLoader::new(dir) {
-            Ok(loader) => MapSource::Tiles(loader),
+        let tile_loader = match TileLoader::new(dir) {
+            Ok(loader) => Some(loader),
             Err(e) => {
                 log::error!("Failed to load tiles: {}. Falling back to Overpass.", e);
                 load_from_overpass(&mut renderer, center_lat, center_lon);
-                MapSource::Static
+                None
             }
-        }
+        };
+
+        // Try to initialize router if routing tiles exist
+        let routing_dir = Path::new(dir).join("routing");
+        let router = if routing_dir.exists() {
+            log::info!("Initializing router from: {}", dir);
+            // Router::new expects the base tile directory, not the routing subdirectory
+            match Router::new(dir) {
+                Ok(r) => {
+                    log::info!("Router initialized successfully");
+                    Some(r)
+                }
+                Err(e) => {
+                    log::warn!("Failed to initialize router: {}. Routing disabled.", e);
+                    None
+                }
+            }
+        } else {
+            log::info!("No routing tiles found. Routing disabled.");
+            None
+        };
+
+        // Try to initialize search index if it exists
+        let search_dir = routing_dir.join("search");
+        let search_index = if search_dir.exists() {
+            log::info!("Initializing search index from: {}", search_dir.display());
+            match SearchIndex::open(&search_dir) {
+                Ok(idx) => {
+                    log::info!("Search index loaded: {} entries", idx.entry_count());
+                    Some(idx)
+                }
+                Err(e) => {
+                    log::warn!("Failed to load search index: {}. Search disabled.", e);
+                    None
+                }
+            }
+        } else {
+            log::info!("No search index found. Search disabled.");
+            None
+        };
+
+        let source = match tile_loader {
+            Some(loader) => MapSource::Tiles(loader),
+            None => MapSource::Static,
+        };
+        (source, router, search_index)
     } else {
         log::info!("Using Overpass API for map data");
         load_from_overpass(&mut renderer, center_lat, center_lon);
-        MapSource::Static
+        (MapSource::Static, None, None)
     };
 
     // Vehicle state
@@ -97,6 +147,9 @@ fn main() {
     // Wrap in RefCells
     let renderer = Rc::new(RefCell::new(renderer));
     let map_source = Rc::new(RefCell::new(map_source));
+    let router = Rc::new(RefCell::new(router));
+    let search_index = Rc::new(RefCell::new(search_index));
+
 
     // Initial render
     {
@@ -133,6 +186,118 @@ fn main() {
         renderer_zoom_out.borrow_mut().zoom_out(1.25);
     });
 
+    // Set up search callback
+    let search_index_for_search = search_index.clone();
+    let vehicle_for_search = vehicle.clone();
+    let ui_weak_for_search = ui.as_weak();
+    ui.on_search(move |query| {
+        let query_str: String = query.into();
+        log::debug!("Search query: '{}'", query_str);
+
+        let veh = vehicle_for_search.borrow();
+        let veh_lat = veh.latitude;
+        let veh_lon = veh.longitude;
+        drop(veh);
+
+        if let Some(ref idx) = *search_index_for_search.borrow() {
+            let mut results = idx.prefix_search(&query_str, 20);
+
+            // Sort by distance from current position
+            results.sort_by(|a, b| {
+                let dist_a = haversine_km(veh_lat, veh_lon, a.lat, a.lon);
+                let dist_b = haversine_km(veh_lat, veh_lon, b.lat, b.lon);
+                dist_a.partial_cmp(&dist_b).unwrap_or(std::cmp::Ordering::Equal)
+            });
+
+            log::debug!("Found {} results", results.len());
+
+            // Convert to Slint model with user-friendly category names and distance
+            let slint_results: Vec<SearchResultItem> = results
+                .into_iter()
+                .take(10)
+                .map(|r| {
+                    let distance_km = haversine_km(veh_lat, veh_lon, r.lat, r.lon);
+                    let category_name = match r.category {
+                        minimap_routing::search::PlaceCategory::Settlement => "City/Town",
+                        minimap_routing::search::PlaceCategory::Street => "Street",
+                        minimap_routing::search::PlaceCategory::Poi => "Point of Interest",
+                        minimap_routing::search::PlaceCategory::Transport => "Transport",
+                        minimap_routing::search::PlaceCategory::Natural => "Natural Feature",
+                        minimap_routing::search::PlaceCategory::Other => "Place",
+                    };
+                    SearchResultItem {
+                        name: r.name.into(),
+                        lat: r.lat as f32,
+                        lon: r.lon as f32,
+                        category: category_name.into(),
+                        distance_km: distance_km as f32,
+                    }
+                })
+                .collect();
+
+            if let Some(ui) = ui_weak_for_search.upgrade() {
+                ui.set_search_results(slint::ModelRc::new(slint::VecModel::from(slint_results)));
+            }
+        } else {
+            log::warn!("Search index not available");
+        }
+    });
+
+    // Set up route-to callback
+    let router_for_route = router.clone();
+    let renderer_for_route = renderer.clone();
+    let vehicle_for_route = vehicle.clone();
+    ui.on_route_to(move |dest_lat, dest_lon| {
+        let veh = vehicle_for_route.borrow();
+        let start_lat = veh.latitude;
+        let start_lon = veh.longitude;
+        log::info!(
+            "Routing from ({:.5}, {:.5}) to ({:.5}, {:.5})",
+            start_lat, start_lon, dest_lat, dest_lon
+        );
+
+        if let Some(ref mut router) = *router_for_route.borrow_mut() {
+            let distance_km = haversine_km(start_lat, start_lon, dest_lat as f64, dest_lon as f64);
+            log::info!("Route distance: {:.1} km", distance_km);
+
+            match router.find_route(start_lat, start_lon, dest_lat as f64, dest_lon as f64) {
+                Some(route) => {
+                    log::info!(
+                        "Route found: {:.0}m, {:.0}s, {} points",
+                        route.total_distance_m,
+                        route.total_time_s,
+                        route.path.len()
+                    );
+
+                    // Prepend the car's current position and append destination
+                    // so the route visually starts from the car and ends at destination
+                    let mut full_path = Vec::with_capacity(route.path.len() + 2);
+                    full_path.push((start_lat, start_lon));
+                    full_path.extend(route.path);
+                    full_path.push((dest_lat as f64, dest_lon as f64));
+
+                    renderer_for_route.borrow_mut().set_route(Route::new(
+                        full_path,
+                        route.total_distance_m,
+                        route.total_time_s,
+                    ));
+                }
+                None => {
+                    log::warn!("No route found. Try a closer destination (routing may have coverage gaps).");
+                }
+            }
+        } else {
+            log::warn!("Router not available. Generate routing tiles first.");
+        }
+    });
+
+    // Set up clear-route callback
+    let renderer_for_clear = renderer.clone();
+    ui.on_clear_route(move || {
+        renderer_for_clear.borrow_mut().clear_route();
+        log::info!("Route cleared");
+    });
+
     // Set up animation timer
     let ui_weak = ui.as_weak();
     let vehicle_clone = vehicle.clone();
@@ -141,6 +306,8 @@ fn main() {
     let keys_clone = pressed_keys.clone();
     let last_update = Rc::new(RefCell::new(Instant::now()));
     let last_tile_update = Rc::new(RefCell::new(Instant::now()));
+    let theme_cycled = Rc::new(RefCell::new(false));
+    let clear_pressed = Rc::new(RefCell::new(false));
 
     const MOVE_SPEED: f64 = 200.0;
     const ROTATE_SPEED: f32 = 90.0;
@@ -195,6 +362,27 @@ fn main() {
                 renderer_clone.borrow_mut().zoom_out(zoom_speed);
             }
 
+            // Handle clear route (C = clear route)
+            if keys.contains("c") && !*clear_pressed.borrow() {
+                *clear_pressed.borrow_mut() = true;
+                renderer_clone.borrow_mut().clear_route();
+                log::info!("Route cleared");
+            }
+            if !keys.contains("c") {
+                *clear_pressed.borrow_mut() = false;
+            }
+
+            // Handle theme cycling (H = cycle to next theme)
+            if keys.contains("h") && !*theme_cycled.borrow() {
+                *theme_cycled.borrow_mut() = true;
+                ui.invoke_cycle_theme();
+                let theme_name: String = ui.get_current_theme_name().into();
+                log::info!("Theme changed to: {}", theme_name);
+            }
+            if !keys.contains("h") {
+                *theme_cycled.borrow_mut() = false;
+            }
+
             drop(keys);
 
             // Update tiles periodically (every 500ms)
@@ -215,7 +403,7 @@ fn main() {
         },
     );
 
-    log::info!("Simulator ready. WASD=move, Q/E=zoom");
+    log::info!("Simulator ready. WASD=move, Q/E=zoom, C=clear route, H=theme. Tap screen for search.");
     ui.run().unwrap();
 }
 
@@ -309,21 +497,13 @@ fn update_map_from_source(source: &mut MapSource, renderer: &mut MapRenderer, la
 }
 
 fn update_ui(ui: &SimulatorWindow, renderer: &MapRenderer, vehicle: &VehicleState) {
-    let segments = renderer.render(vehicle);
+    let mut segments = renderer.render(vehicle);
+    let route_segments = renderer.render_route(vehicle);
+    segments.extend(route_segments);
+
     let pois = renderer.render_pois(vehicle);
     let area_triangles = renderer.render_area_triangles(vehicle);
     let waterways = renderer.render_waterways(vehicle);
-
-    static LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    if !LOGGED.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        log::info!(
-            "Total road segments: {}, POIs: {}, area triangles: {}, waterways: {}",
-            segments.len(),
-            pois.len(),
-            area_triangles.len(),
-            waterways.len()
-        );
-    }
 
     let road_model: Vec<RoadSegment> = segments
         .iter()
@@ -380,4 +560,18 @@ fn update_ui(ui: &SimulatorWindow, renderer: &MapRenderer, vehicle: &VehicleStat
         latitude: vehicle.latitude as f32,
         longitude: vehicle.longitude as f32,
     });
+}
+
+/// Calculate distance in kilometers using haversine formula
+fn haversine_km(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
+    const R: f64 = 6371.0; // Earth radius in km
+
+    let dlat = (lat2 - lat1).to_radians();
+    let dlon = (lon2 - lon1).to_radians();
+
+    let a = (dlat / 2.0).sin().powi(2)
+        + lat1.to_radians().cos() * lat2.to_radians().cos() * (dlon / 2.0).sin().powi(2);
+
+    let c = 2.0 * a.sqrt().asin();
+    R * c
 }

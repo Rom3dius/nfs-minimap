@@ -5,6 +5,9 @@ A Need for Speed 2 inspired minimap display built with Rust and Slint. Runs on d
 ## Features
 
 - **Real OSM data**: Loads roads, POIs, water features, forests, and parks from OpenStreetMap
+- **On-device routing**: Hierarchical A* routing for country-scale navigation on memory-constrained devices
+- **Place search**: FST-based prefix search for place names
+- **Color themes**: 6 built-in themes (NFS2 Classic, Hello Kitty, Wintergreen, Catppuccin Frappe/Mocha, Black & Gold)
 - **Custom tile format**: Compact binary tiles for offline use
 - **Multi-platform**: Desktop simulator, iOS app, ESP32-P4 (planned)
 - **Zoom with road filtering**: Automatically hides minor roads when zoomed out to prevent clutter
@@ -19,6 +22,7 @@ nfs-minimap/
 ├── crates/
 │   ├── minimap-core/       # Platform-agnostic map logic & rendering
 │   ├── minimap-tiles/      # Tile format & processor
+│   ├── minimap-routing/    # Hierarchical routing engine (no_std compatible)
 │   ├── minimap-simulator/  # Desktop simulator (WASD + zoom)
 │   └── minimap-mobile/     # iOS/Android app with GPS
 ├── ios/                    # iOS build scripts & Swift code
@@ -59,6 +63,9 @@ cargo run -p minimap-simulator -- tiles/
 **Controls:**
 - **WASD**: Move and rotate
 - **Q/E**: Zoom in/out
+- **C**: Clear route
+- **H**: Cycle color theme
+- **Tap/Click**: Show UI buttons (search, settings, legend)
 
 ### Generating Map Tiles
 
@@ -69,10 +76,20 @@ Download OSM data and generate tiles:
 curl -L -o switzerland.osm.pbf \
   https://download.geofabrik.de/europe/switzerland-latest.osm.pbf
 
-# Generate tiles
+# Generate render tiles (roads, POIs, areas)
 cargo run -p minimap-tiles --release --features processor --bin tile-processor -- \
   switzerland.osm.pbf tiles/
+
+# Generate routing tiles (for navigation)
+cargo run -p minimap-tiles --release --features route-processor --bin route-processor -- \
+  switzerland.osm.pbf tiles/
 ```
+
+This creates:
+- `tiles/*.bin` - Render tiles (0.01° each, ~1.1km)
+- `tiles/routing/level0/` - Highway tiles (1.0°, motorway/trunk/primary)
+- `tiles/routing/level1/` - Arterial tiles (0.1°, secondary/tertiary)
+- `tiles/routing/level2/` - Local tiles (0.01°, residential/service)
 
 ## iOS App
 
@@ -105,6 +122,25 @@ Push a tag to trigger automated builds:
 ```bash
 git tag ios-v1.0 && git push origin ios-v1.0
 ```
+
+## Color Themes
+
+The minimap supports 6 built-in color themes:
+
+| Theme | Description |
+|-------|-------------|
+| NFS2 Classic | Dark blue with cyan roads (default) |
+| Hello Kitty | Pink/pastel colors |
+| Wintergreen | Dark green forest theme |
+| Catppuccin Frappe | Muted pastels on dark gray |
+| Catppuccin Mocha | Warm pastels on darker gray |
+| Black & Gold | Luxury dark theme with gold accents |
+
+**Switching themes:**
+- **Desktop**: Press `H` to cycle themes, or tap screen → gear icon → Settings
+- **Mobile**: Tap screen → gear icon → Settings panel
+
+Themes are defined in `ui/minimap.slint` in the `ThemeManager` global.
 
 ## Configuration
 
@@ -157,6 +193,45 @@ Custom binary format (`.bin` files) optimized for embedded use:
 
 Each tile covers 0.01° × 0.01° (~1.1km at Swiss latitudes) with ~0.3m coordinate precision.
 
+## Routing System
+
+Hierarchical routing engine designed for country-scale navigation on memory-constrained devices (32MB PSRAM target).
+
+### Architecture
+
+Three-level tile hierarchy optimized for different route distances:
+
+| Level | Tile Size | Roads | Memory Strategy |
+|-------|-----------|-------|-----------------|
+| Highway (0) | 1.0° (~111km) | motorway, trunk, primary | Always loaded |
+| Arterial (1) | 0.1° (~11km) | secondary, tertiary | LRU cache |
+| Local (2) | 0.01° (~1.1km) | residential, service | On-demand |
+
+### Level Selection
+
+Routes automatically use the appropriate hierarchy level:
+
+| Distance | Strategy |
+|----------|----------|
+| < 5km | Local tiles only (single-tile A*) |
+| 5-50km | Arterial level with bidirectional A* |
+| > 50km | Highway backbone + level transitions |
+
+### Data Structures
+
+Compact binary format for embedded use:
+- `RoutingNode`: 16 bytes (microdegree coords, edge indices, flags)
+- `RoutingEdge`: 12 bytes (target, distance in cm, speed, road class)
+
+### Memory Budget (32MB target)
+
+| Component | Size |
+|-----------|------|
+| Highway tiles (always loaded) | ~4 MB |
+| Arterial LRU cache | ~12 MB |
+| Local tiles (on-demand) | ~2 MB |
+| Working memory | ~14 MB |
+
 ## License
 
 This project uses the Slint UI framework:
@@ -178,10 +253,14 @@ Project code is licensed under GPL-3.0-or-later.
 - [x] POI markers (gas stations, parking, etc.)
 - [x] Natural areas (water, forests, parks)
 - [x] Waterways (rivers, streams)
+- [x] Hierarchical routing engine
+- [x] Country-scale routing tile processor
+- [x] Route display in UI
+- [x] Search by name (FST index)
+- [x] Color themes (6 built-in themes)
 - [ ] ESP32-P4 firmware
 - [ ] Touch controls for ESP32-P4
-- [ ] Route highlighting / navigation
-- [ ] Day/night color schemes
+- [ ] Elevation/heightmap support
 
 ## Resources
 
