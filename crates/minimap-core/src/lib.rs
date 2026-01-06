@@ -241,6 +241,22 @@ impl Route {
     }
 }
 
+/// A complete rendered frame with all map elements in screen coordinates.
+///
+/// This bundles all rendered data for a single frame, ensuring consistency
+/// and reducing code duplication across platforms (simulator, mobile, ESP32).
+#[derive(Debug, Clone, Default)]
+pub struct RenderedFrame {
+    /// Road segments including route highlights
+    pub segments: Vec<ScreenSegment>,
+    /// Points of interest
+    pub pois: Vec<ScreenPoi>,
+    /// Area triangles (water, forest, etc.)
+    pub areas: Vec<ScreenTriangle>,
+    /// Waterway segments (rivers, streams)
+    pub waterways: Vec<ScreenWaterway>,
+}
+
 /// The main map renderer
 pub struct MapRenderer {
     config: MinimapConfig,
@@ -351,6 +367,23 @@ impl MapRenderer {
     /// Zoom out by a factor (e.g., 1.25 = 25% farther)
     pub fn zoom_out(&mut self, factor: f32) {
         self.set_zoom(self.config.meters_per_pixel * factor);
+    }
+
+    /// Render all map elements for a single frame.
+    ///
+    /// This is the preferred method for rendering as it ensures all elements
+    /// are rendered consistently and reduces code duplication across platforms.
+    pub fn render_all(&self, vehicle: &VehicleState) -> RenderedFrame {
+        let mut segments = self.render(vehicle);
+        let route_segments = self.render_route(vehicle);
+        segments.extend(route_segments);
+
+        RenderedFrame {
+            segments,
+            pois: self.render_pois(vehicle),
+            areas: self.render_area_triangles(vehicle),
+            waterways: self.render_waterways(vehicle),
+        }
     }
 
     /// Transform all roads to screen coordinates based on current vehicle state

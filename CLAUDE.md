@@ -118,6 +118,31 @@ minimap_set_gps_active(active)      // GPS status
 minimap_set_status(text)            // Status text
 ```
 
+## Code Reuse Guidelines
+
+**Maximize code sharing across platforms.** Platform-specific code should be limited to:
+
+1. **Input handling** - GPS integration (iOS/Android), keyboard controls (simulator)
+2. **FFI/entry points** - Platform initialization and callbacks
+3. **Build configuration** - Cargo.toml platform-specific dependencies
+
+Everything else should live in shared crates:
+
+| Component | Shared Location | What Platforms Use It |
+|-----------|-----------------|----------------------|
+| Rendering | `minimap-core` (`MapRenderer`, `render_all()`) | All |
+| UI components | `ui/minimap.slint` (`MinimapView`) | All |
+| Tile loading | `minimap-tiles` | All |
+| Routing/Search | `minimap-routing` | All |
+
+**Key patterns:**
+
+- Use `MapRenderer::render_all()` to get a `RenderedFrame` with all rendered elements (roads, routes, POIs, areas, waterways)
+- Import `MinimapView` from shared `ui/minimap.slint` instead of duplicating UI code
+- Forward callbacks (search, route_to, zoom, etc.) from platform UIs to shared component
+
+**When adding features:** Add the logic to `minimap-core` or the appropriate shared crate first, then wire it up in platform-specific code. Never duplicate rendering or business logic.
+
 ## Key Source Files
 
 - `crates/minimap-core/src/lib.rs` - Core renderer

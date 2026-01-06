@@ -373,12 +373,10 @@ impl App {
 
     fn refresh_ui(&self) {
         if let Some(ui) = self.ui.upgrade() {
-            let segments = self.renderer.render(&self.vehicle);
-            let pois = self.renderer.render_pois(&self.vehicle);
-            let area_triangles = self.renderer.render_area_triangles(&self.vehicle);
-            let waterways = self.renderer.render_waterways(&self.vehicle);
+            // Use render_all() to get all map elements in one call
+            let frame = self.renderer.render_all(&self.vehicle);
 
-            let road_model: Vec<RoadSegment> = segments
+            let road_model: Vec<RoadSegment> = frame.segments
                 .iter()
                 .map(|seg| RoadSegment {
                     x1: seg.x1,
@@ -389,7 +387,7 @@ impl App {
                 })
                 .collect();
 
-            let poi_model: Vec<Poi> = pois
+            let poi_model: Vec<Poi> = frame.pois
                 .iter()
                 .map(|p| Poi {
                     x: p.x,
@@ -398,7 +396,7 @@ impl App {
                 })
                 .collect();
 
-            let area_model: Vec<AreaTriangle> = area_triangles
+            let area_model: Vec<AreaTriangle> = frame.areas
                 .iter()
                 .map(|t| AreaTriangle {
                     x1: t.x1,
@@ -411,7 +409,7 @@ impl App {
                 })
                 .collect();
 
-            let waterway_model: Vec<WaterwaySegment> = waterways
+            let waterway_model: Vec<WaterwaySegment> = frame.waterways
                 .iter()
                 .map(|w| WaterwaySegment {
                     x1: w.x1,

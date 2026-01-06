@@ -512,15 +512,10 @@ fn update_map_from_source(source: &mut MapSource, renderer: &mut MapRenderer, la
 }
 
 fn update_ui(ui: &SimulatorWindow, renderer: &MapRenderer, vehicle: &VehicleState) {
-    let mut segments = renderer.render(vehicle);
-    let route_segments = renderer.render_route(vehicle);
-    segments.extend(route_segments);
+    // Use shared render_all() for consistent rendering across platforms
+    let frame = renderer.render_all(vehicle);
 
-    let pois = renderer.render_pois(vehicle);
-    let area_triangles = renderer.render_area_triangles(vehicle);
-    let waterways = renderer.render_waterways(vehicle);
-
-    let road_model: Vec<RoadSegment> = segments
+    let road_model: Vec<RoadSegment> = frame.segments
         .iter()
         .map(|seg| RoadSegment {
             x1: seg.x1,
@@ -531,7 +526,7 @@ fn update_ui(ui: &SimulatorWindow, renderer: &MapRenderer, vehicle: &VehicleStat
         })
         .collect();
 
-    let poi_model: Vec<Poi> = pois
+    let poi_model: Vec<Poi> = frame.pois
         .iter()
         .map(|p| Poi {
             x: p.x,
@@ -540,7 +535,7 @@ fn update_ui(ui: &SimulatorWindow, renderer: &MapRenderer, vehicle: &VehicleStat
         })
         .collect();
 
-    let area_model: Vec<AreaTriangle> = area_triangles
+    let area_model: Vec<AreaTriangle> = frame.areas
         .iter()
         .map(|t| AreaTriangle {
             x1: t.x1,
@@ -553,7 +548,7 @@ fn update_ui(ui: &SimulatorWindow, renderer: &MapRenderer, vehicle: &VehicleStat
         })
         .collect();
 
-    let waterway_model: Vec<WaterwaySegment> = waterways
+    let waterway_model: Vec<WaterwaySegment> = frame.waterways
         .iter()
         .map(|w| WaterwaySegment {
             x1: w.x1,
