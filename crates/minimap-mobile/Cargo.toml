@@ -13,6 +13,7 @@ name = "minimap_mobile"
 [dependencies]
 minimap-core = { path = "../minimap-core" }
 minimap-tiles = { path = "../minimap-tiles", features = ["loader"] }
+minimap-routing = { path = "../minimap-routing", features = ["loader", "search"] }
 slint = { workspace = true }
 log.workspace = true
 

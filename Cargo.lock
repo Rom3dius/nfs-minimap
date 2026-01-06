@@ -3053,6 +3053,7 @@ dependencies = [
  "android_logger",
  "log",
  "minimap-core",
+ "minimap-routing",
  "minimap-tiles",
  "slint",
  "slint-build",

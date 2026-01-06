@@ -1048,33 +1048,40 @@ component SearchPanel inherits Rectangle {
                     padding-left: 12px;
                     padding-right: 8px;
                     spacing: 8px;
+                    alignment: stretch;
 
                     search-input := TextInput {
                         vertical-alignment: center;
+                        horizontal-stretch: 1;
                         font-size: 14px;
                         color: ThemeManager.colors.text-color;
                         text <=> query;
                         accepted => { search(self.text); }
                     }
 
-                    // Search button
-                    Rectangle {
-                        width: 28px;
-                        height: 28px;
-                        border-radius: 6px;
-                        background: ThemeManager.colors.accent;
+                    // Search button - vertically centered with fixed size
+                    VerticalLayout {
+                        alignment: center;
+                        Rectangle {
+                            width: 28px;
+                            height: 28px;
+                            border-radius: 6px;
+                            background: ThemeManager.colors.accent;
 
-                        Text {
-                            text: "→";
-                            font-size: 16px;
-                            font-weight: 700;
-                            color: ThemeManager.colors.bg;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
+                            Text {
+                                width: 100%;
+                                height: 100%;
+                                text: "→";
+                                font-size: 16px;
+                                font-weight: 700;
+                                color: ThemeManager.colors.bg;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
 
-                        TouchArea {
-                            clicked => { search(search-input.text); }
+                            TouchArea {
+                                clicked => { search(search-input.text); }
+                            }
                         }
                     }
                 }

@@ -1,9 +1,9 @@
 // Mobile minimap UI - uses GPS for positioning
 // Uses shared MinimapView component with GPS status ring
 
-import { MinimapView, RoadSegment, PlayerState, MinimapColors, Poi, AreaTriangle, WaterwaySegment, ThemeManager } from "../../../ui/minimap.slint";
+import { MinimapView, RoadSegment, PlayerState, MinimapColors, Poi, AreaTriangle, WaterwaySegment, ThemeManager, SearchResultItem } from "../../../ui/minimap.slint";
 
-export { RoadSegment, PlayerState, Poi, AreaTriangle, WaterwaySegment }
+export { RoadSegment, PlayerState, Poi, AreaTriangle, WaterwaySegment, SearchResultItem }
 
 export component MobileApp inherits Window {
     title: "NFS Minimap";
@@ -18,9 +18,17 @@ export component MobileApp inherits Window {
     // GPS status: 0 = no signal (red ring), 1 = inaccurate (yellow ring), 2 = good (no ring)
     in property <int> gps-status <=> map.gps-status;
 
+    // Search results from Rust
+    in property <[SearchResultItem]> search-results <=> map.search-results;
+
     // Zoom callbacks (forwarded to shared MinimapView)
     callback zoom-in <=> map.zoom-in;
     callback zoom-out <=> map.zoom-out;
+
+    // Search and routing callbacks (forwarded to shared MinimapView)
+    callback search <=> map.search;
+    callback route-to <=> map.route-to;
+    callback clear-route <=> map.clear-route;
 
     background: ThemeManager.colors.bg;
 

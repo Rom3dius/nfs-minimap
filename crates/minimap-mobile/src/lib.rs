@@ -5,9 +5,11 @@
 //! For iOS: Uses CoreLocation via objc2 bindings
 //! For Android: Uses android-activity
 
-use minimap_core::{MapRenderer, MinimapConfig, VehicleState, WorldRoad, WorldPoi, WorldArea, WorldWaterway, RoadType, PoiType, AreaType, WaterwayType};
+use minimap_core::{MapRenderer, MinimapConfig, VehicleState, WorldRoad, WorldPoi, WorldArea, WorldWaterway, RoadType, PoiType, AreaType, WaterwayType, Route};
 use minimap_core::transform::smooth_angle;
+use minimap_routing::{Router, SearchIndex};
 use minimap_tiles::loader::TileLoader;
+use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 
 slint::include_modules!();
@@ -37,6 +39,8 @@ static APP: OnceLock<Arc<Mutex<App>>> = OnceLock::new();
 struct App {
     renderer: MapRenderer,
     tile_loader: Option<TileLoader>,
+    router: Option<Router>,
+    search_index: Option<SearchIndex>,
     /// Currently displayed vehicle state (smoothly interpolated)
     vehicle: VehicleState,
     /// Target vehicle state from GPS (where we're interpolating toward)
@@ -72,6 +76,46 @@ impl App {
             }
         });
 
+        // Initialize router if routing tiles exist
+        let router = tile_dir.and_then(|dir| {
+            let routing_dir = Path::new(dir).join("routing");
+            if routing_dir.exists() {
+                match Router::new(dir) {
+                    Ok(r) => {
+                        log::info!("Router initialized from {}", dir);
+                        Some(r)
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to initialize router: {}", e);
+                        None
+                    }
+                }
+            } else {
+                log::info!("No routing tiles found at {:?}", routing_dir);
+                None
+            }
+        });
+
+        // Initialize search index if it exists
+        let search_index = tile_dir.and_then(|dir| {
+            let search_dir = Path::new(dir).join("routing").join("search");
+            if search_dir.exists() {
+                match SearchIndex::open(&search_dir) {
+                    Ok(index) => {
+                        log::info!("Search index loaded with {} entries", index.entry_count());
+                        Some(index)
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to load search index: {}", e);
+                        None
+                    }
+                }
+            } else {
+                log::info!("No search index found at {:?}", search_dir);
+                None
+            }
+        });
+
         let ui = MobileApp::new()?;
 
         let initial_state = VehicleState {
@@ -84,6 +128,8 @@ impl App {
         Ok((Self {
             renderer,
             tile_loader,
+            router,
+            search_index,
             vehicle: initial_state.clone(),
             target: initial_state,
             has_gps_fix: false,
@@ -238,6 +284,93 @@ impl App {
         self.refresh_ui();
     }
 
+    fn search(&self, query: &str) -> Vec<SearchResultItem> {
+        use minimap_routing::search::PlaceCategory;
+
+        if let Some(ref index) = self.search_index {
+            let mut results = index.prefix_search(query, 20);
+
+            // Sort by distance from current position
+            let veh_lat = self.vehicle.latitude;
+            let veh_lon = self.vehicle.longitude;
+            results.sort_by(|a, b| {
+                let dist_a = (a.lat - veh_lat).powi(2) + (a.lon - veh_lon).powi(2);
+                let dist_b = (b.lat - veh_lat).powi(2) + (b.lon - veh_lon).powi(2);
+                dist_a.partial_cmp(&dist_b).unwrap_or(std::cmp::Ordering::Equal)
+            });
+
+            results
+                .into_iter()
+                .take(10)
+                .map(|r| {
+                    let category = match r.category {
+                        PlaceCategory::Settlement => "Settlement",
+                        PlaceCategory::Street => "Street",
+                        PlaceCategory::Poi => "POI",
+                        PlaceCategory::Transport => "Transport",
+                        PlaceCategory::Natural => "Natural",
+                        PlaceCategory::Other => "Place",
+                    };
+
+                    // Calculate distance in km
+                    let dlat = r.lat - veh_lat;
+                    let dlon = r.lon - veh_lon;
+                    let distance_km = ((dlat * 111.0).powi(2) + (dlon * 111.0 * veh_lat.to_radians().cos()).powi(2)).sqrt();
+
+                    SearchResultItem {
+                        name: r.name.clone().into(),
+                        lat: r.lat as f32,
+                        lon: r.lon as f32,
+                        category: category.into(),
+                        distance_km: distance_km as f32,
+                    }
+                })
+                .collect()
+        } else {
+            log::warn!("Search index not available");
+            Vec::new()
+        }
+    }
+
+    fn route_to(&mut self, lat: f64, lon: f64) {
+        if let Some(ref mut router) = self.router {
+            let start_lat = self.vehicle.latitude;
+            let start_lon = self.vehicle.longitude;
+            log::info!("Routing from ({:.5}, {:.5}) to ({:.5}, {:.5})", start_lat, start_lon, lat, lon);
+
+            match router.find_route(start_lat, start_lon, lat, lon) {
+                Some(route) => {
+                    log::info!("Route found: {:.0}m, {:.0}s, {} points",
+                        route.total_distance_m, route.total_time_s, route.path.len());
+
+                    // Prepend car's position and append destination
+                    let mut full_path = Vec::with_capacity(route.path.len() + 2);
+                    full_path.push((start_lat, start_lon));
+                    full_path.extend(route.path);
+                    full_path.push((lat, lon));
+
+                    self.renderer.set_route(Route::new(
+                        full_path,
+                        route.total_distance_m,
+                        route.total_time_s,
+                    ));
+                    self.refresh_ui();
+                }
+                None => {
+                    log::warn!("No route found");
+                }
+            }
+        } else {
+            log::warn!("Router not available");
+        }
+    }
+
+    fn clear_route(&mut self) {
+        self.renderer.clear_route();
+        self.refresh_ui();
+        log::info!("Route cleared");
+    }
+
     fn refresh_ui(&self) {
         if let Some(ui) = self.ui.upgrade() {
             let segments = self.renderer.render(&self.vehicle);
@@ -386,6 +519,40 @@ pub extern "C" fn minimap_init(tile_dir: *const std::ffi::c_char) -> bool {
         if let Some(app) = APP.get() {
             if let Ok(mut app) = app.lock() {
                 app.zoom_out();
+            }
+        }
+    });
+
+    // Set up search callback
+    let ui_weak_for_search = ui.as_weak();
+    ui.on_search(move |query| {
+        let query_str: String = query.into();
+        log::debug!("Search query: '{}'", query_str);
+
+        if let Some(app) = APP.get() {
+            if let Ok(app) = app.lock() {
+                let results = app.search(&query_str);
+                if let Some(ui) = ui_weak_for_search.upgrade() {
+                    ui.set_search_results(slint::ModelRc::new(slint::VecModel::from(results)));
+                }
+            }
+        }
+    });
+
+    // Set up route-to callback
+    ui.on_route_to(move |lat, lon| {
+        if let Some(app) = APP.get() {
+            if let Ok(mut app) = app.lock() {
+                app.route_to(lat as f64, lon as f64);
+            }
+        }
+    });
+
+    // Set up clear-route callback
+    ui.on_clear_route(|| {
+        if let Some(app) = APP.get() {
+            if let Ok(mut app) = app.lock() {
+                app.clear_route();
             }
         }
     });
